@@ -36,8 +36,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 message.Reference = Guid.NewGuid().ToString().Replace("-", "");
             var pubsub = connection.GetSubscriber();
             var serialized = JsonConvert.SerializeObject(message);
-            Console.WriteLine("sending " + serialized);
-            var received = await pubsub.PublishAsync("u" + message.User.UserId, serialized);
+            var received = await pubsub.PublishAsync("uev" + message.User.UserId, serialized);
             // message has been received by someone and can be dropped
             if (received > 0)
                 return message;
@@ -86,7 +85,7 @@ namespace Coflnet.Sky.EventBroker.Services
             return await db.Messages.Where(m=>m.User.UserId == userId).Include(m=>m.Setings).ToListAsync();
         }
 
-        internal async Task CleanDb()
+        internal async Task<int> CleanDb()
         {
             var minTime = DateTime.UtcNow - TimeSpan.FromMinutes(1);
             var oldestTime = DateTime.UtcNow - TimeSpan.FromDays(30);
@@ -96,6 +95,7 @@ namespace Coflnet.Sky.EventBroker.Services
             db.Messages.RemoveRange(old);
             var remCount = await db.SaveChangesAsync();
             Logger.LogInformation("Removed {remCount} message from db", remCount);
+            return remCount;
         }
 
         internal async Task Verified(string userId, string minecraftUuid)

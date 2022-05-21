@@ -22,7 +22,7 @@ namespace Coflnet.Sky.EventBroker.Services
         private IServiceScopeFactory scopeFactory;
         private IConfiguration config;
         private ILogger<BaseBackgroundService> logger;
-        private Prometheus.Counter consumeCount = Prometheus.Metrics.CreateCounter("sky_base_conume", "How many messages were consumed");
+        private Prometheus.Counter cleanupCount = Prometheus.Metrics.CreateCounter("sky_eventbroker_cleanup", "How many events were cleaned up");
 
         public BaseBackgroundService(
             IServiceScopeFactory scopeFactory, IConfiguration config, ILogger<BaseBackgroundService> logger)
@@ -63,7 +63,8 @@ namespace Coflnet.Sky.EventBroker.Services
                     await Task.Delay(TimeSpan.FromMinutes(1));
                     using var scope = scopeFactory.CreateScope();
                     var service = GetService(scope);
-                    await service.CleanDb();
+                    var count = await service.CleanDb();
+                    cleanupCount.Inc(count);
                 }
             });
 
