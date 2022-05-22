@@ -1,6 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:6.0 as build
 WORKDIR /build
 RUN git clone --depth=1 https://github.com/Coflnet/HypixelSkyblock.git dev
+RUN git clone --depth=1 https://github.com/Coflnet/HypixelBackendForFrontend
 WORKDIR /build/sky
 COPY SkyBase.csproj SkyBase.csproj
 RUN dotnet restore

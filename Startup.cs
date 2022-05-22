@@ -18,6 +18,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using OpenTracing;
 using OpenTracing.Util;
+using Coflnet.Sky.Commands.Shared;
 using Prometheus;
 
 namespace Coflnet.Sky.EventBroker
@@ -65,9 +66,11 @@ namespace Coflnet.Sky.EventBroker
             services.AddHostedService<BaseBackgroundService>();
             services.AddJaeger();
             services.AddScoped<MessageService>();
+            services.AddSingleton<AsyncUserLockService>();
             services.AddSingleton<ProductsApi>(sp=>{
                 return new ProductsApi(Configuration["PAYMENT_BASE_URL"]);
             });
+            services.AddCoflService();
             services.AddResponseCaching();
             services.AddResponseCompression();
         }

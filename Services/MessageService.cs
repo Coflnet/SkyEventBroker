@@ -8,6 +8,8 @@ using Newtonsoft.Json;
 using Coflnet.Payments.Client.Model;
 using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
+using Coflnet.Sky.Commands.Shared;
+using Microsoft.Extensions.Configuration;
 
 namespace Coflnet.Sky.EventBroker.Services
 {
@@ -17,13 +19,22 @@ namespace Coflnet.Sky.EventBroker.Services
         private ConnectionMultiplexer connection;
         private Payments.Client.Api.ProductsApi productsApi;
         private ILogger<MessageService> Logger;
+        private AsyncUserLockService lockService;
+        private SettingsService settingsService;
+        private IConfiguration config;
+        private PremiumService premiumService;
 
-        public MessageService(EventDbContext db, ConnectionMultiplexer connection, Payments.Client.Api.ProductsApi productsApi, ILogger<MessageService> logger)
+        public MessageService(EventDbContext db, ConnectionMultiplexer connection, Payments.Client.Api.ProductsApi productsApi,
+                        ILogger<MessageService> logger, AsyncUserLockService lockService, SettingsService settingsService, IConfiguration config, PremiumService premiumService)
         {
             this.db = db;
             this.connection = connection;
             this.productsApi = productsApi;
             Logger = logger;
+            this.lockService = lockService;
+            this.settingsService = settingsService;
+            this.config = config;
+            this.premiumService = premiumService;
         }
 
         public async Task<MessageContainer> AddMessage(MessageContainer message)
@@ -37,6 +48,7 @@ namespace Coflnet.Sky.EventBroker.Services
             var pubsub = connection.GetSubscriber();
             var serialized = JsonConvert.SerializeObject(message);
             var received = await pubsub.PublishAsync("uev" + message.User.UserId, serialized);
+            Logger.LogInformation("published for {user} source {source} count {count}", message.User.UserId, message.SourceType, received);
             // message has been received by someone and can be dropped
             if (received > 0)
                 return message;
@@ -50,7 +62,7 @@ namespace Coflnet.Sky.EventBroker.Services
 
         internal Task Received(string refence)
         {
-            db.Confirms.Add(new ReceiveConfirm(){Reference = refence});
+            db.Confirms.Add(new ReceiveConfirm() { Reference = refence });
             return db.SaveChangesAsync();
         }
 
@@ -72,26 +84,41 @@ namespace Coflnet.Sky.EventBroker.Services
                 Message = message,
                 Reference = "transaction" + lp.Id,
                 SourceType = sourceType,
-                Setings = new Settings() { ConfirmDelivery = true, PlaySound = true },
+                Setings = new Models.Settings() { ConfirmDelivery = true, PlaySound = true },
                 User = new Models.User()
                 {
                     UserId = lp.UserId
+                }
+            });
+
+            await lockService.GetLock(lp.UserId, async (u) =>
+            {
+                var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", default);
+                if (config["PRODUCTS:PREMIUM"] == lp.ProductSlug || config["PRODUCTS:TEST_PREMIUM"] == lp.ProductSlug)
+                {
+                    var when = await premiumService.ExpiresWhen(lp.UserId);
+                    if (when > DateTime.Now)
+                    {
+                        current.ExpiresAt = when;
+                        current.Tier = AccountTier.PREMIUM;
+                        await settingsService.UpdateSetting(u, "accountInfo", current);
+                    }
                 }
             });
         }
 
         internal async Task<IEnumerable<MessageContainer>> GetMessages(string userId)
         {
-            return await db.Messages.Where(m=>m.User.UserId == userId).Include(m=>m.Setings).ToListAsync();
+            return await db.Messages.Where(m => m.User.UserId == userId).Include(m => m.Setings).ToListAsync();
         }
 
         internal async Task<int> CleanDb()
         {
             var minTime = DateTime.UtcNow - TimeSpan.FromMinutes(1);
             var oldestTime = DateTime.UtcNow - TimeSpan.FromDays(30);
-            var old = await db.Messages.Where(m=>m.Timestamp < minTime && !m.Setings.StoreIfOffline || m.Timestamp < oldestTime).Include(m=>m.Setings).Include(m=>m.User).ToListAsync();
-            db.RemoveRange(old.Select(o=>o.Setings).Where(s=>s != null));
-            db.RemoveRange(old.Select(o=>o.User).Where(u=>u != null));
+            var old = await db.Messages.Where(m => m.Timestamp < minTime && !m.Setings.StoreIfOffline || m.Timestamp < oldestTime).Include(m => m.Setings).Include(m => m.User).ToListAsync();
+            db.RemoveRange(old.Select(o => o.Setings).Where(s => s != null));
+            db.RemoveRange(old.Select(o => o.User).Where(u => u != null));
             db.Messages.RemoveRange(old);
             var remCount = await db.SaveChangesAsync();
             Logger.LogInformation("Removed {remCount} message from db", remCount);
@@ -106,11 +133,18 @@ namespace Coflnet.Sky.EventBroker.Services
                 Message = "You successfully verified your minecraft account",
                 Reference = minecraftUuid,
                 SourceType = "mcVerify",
-                Setings = new Settings() { ConfirmDelivery = true, PlaySound = true },
+                Setings = new Models.Settings() { ConfirmDelivery = true, PlaySound = true },
                 User = new Models.User()
                 {
                     UserId = userId
                 }
+            });
+
+            await lockService.GetLock(userId, async (u) =>
+            {
+                var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", default);
+                current.McIds.Add(minecraftUuid);
+                await settingsService.UpdateSetting(u, "accountInfo", current);
             });
         }
     }
