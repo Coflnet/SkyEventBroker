@@ -45,9 +45,18 @@ namespace Coflnet.Sky.EventBroker.Services
 
             var flipCons = Coflnet.Kafka.KafkaConsumer.Consume<TransactionEvent>(config["KAFKA_HOST"], config["TOPICS:TRANSACTIONS"], async lp =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var service = GetService(scope);
-                await service.NewTransaction(lp);
+                try
+                {
+
+                    using var scope = scopeFactory.CreateScope();
+                    var service = GetService(scope);
+                    await service.NewTransaction(lp);
+                }
+                catch (System.Exception e)
+                {
+                    logger.LogError(e, "Error while processing transaction");
+                    throw;
+                }
             }, stoppingToken, "sky-referral", AutoOffsetReset.Earliest, new TransactionDeserializer());
             var verfify = Coflnet.Kafka.KafkaConsumer.Consume<VerificationEvent>(config["KAFKA_HOST"], config["TOPICS:VERIFIED"], async lp =>
             {
