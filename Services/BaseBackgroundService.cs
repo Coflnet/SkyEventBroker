@@ -63,9 +63,18 @@ namespace Coflnet.Sky.EventBroker.Services
             }, stoppingToken, "sky-referral", AutoOffsetReset.Earliest, new TransactionDeserializer());
             var verfify = Coflnet.Kafka.KafkaConsumer.Consume<VerificationEvent>(config["KAFKA_HOST"], config["TOPICS:VERIFIED"], async lp =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var service = GetService(scope);
-                await service.Verified(lp.UserId, lp.MinecraftUuid);
+                try
+                {
+
+                    using var scope = scopeFactory.CreateScope();
+                    var service = GetService(scope);
+                    await service.Verified(lp.UserId, lp.MinecraftUuid);
+                }
+                catch (System.Exception e)
+                {
+                    logger.LogError(e, "Error while processing verification");
+                    throw;
+                }
             }, stoppingToken, "sky-referral");
 
             var cleanUp = Task.Run(async () =>
@@ -79,6 +88,7 @@ namespace Coflnet.Sky.EventBroker.Services
                     var count = await service.CleanDb();
                     cleanupCount.Inc(count);
                 }
+                logger.LogInformation("Stopping cleanup task");
             });
 
             stoppingToken.Register(() =>
@@ -87,7 +97,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 Console.WriteLine("quiting");
             });
 
-            await Task.WhenAny(flipCons, verfify);
+            await Task.WhenAny(flipCons, verfify, cleanUp);
             logger.LogError("One task exited");
             throw new Exception("a background task exited");
         }
