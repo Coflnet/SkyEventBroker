@@ -61,13 +61,15 @@ namespace Coflnet.Sky.EventBroker
 
             services.AddSingleton<StackExchange.Redis.ConnectionMultiplexer>((config) =>
             {
+                config.GetRequiredService<ILogger<Startup>>().LogInformation("Connecting to Redis with " + Configuration["REDIS_CONFIG"]);
                 return StackExchange.Redis.ConnectionMultiplexer.Connect(Configuration["REDIS_CONFIG"]);
             });
             services.AddHostedService<BaseBackgroundService>();
             services.AddJaeger();
             services.AddScoped<MessageService>();
             services.AddSingleton<AsyncUserLockService>();
-            services.AddSingleton<ProductsApi>(sp=>{
+            services.AddSingleton<ProductsApi>(sp =>
+            {
                 return new ProductsApi(Configuration["PAYMENT_BASE_URL"]);
             });
             services.AddCoflService();
