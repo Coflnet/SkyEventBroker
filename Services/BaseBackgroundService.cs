@@ -38,11 +38,12 @@ namespace Coflnet.Sky.EventBroker.Services
         /// <returns></returns>
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            using var scope = scopeFactory.CreateScope();
-            var context = scope.ServiceProvider.GetRequiredService<EventDbContext>();
-            // make sure all migrations are applied
-            await context.Database.MigrateAsync();
-
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var context = scope.ServiceProvider.GetRequiredService<EventDbContext>();
+                // make sure all migrations are applied
+                await context.Database.MigrateAsync();
+            }
             var flipCons = Coflnet.Kafka.KafkaConsumer.Consume<TransactionEvent>(config["KAFKA_HOST"], config["TOPICS:TRANSACTIONS"], async lp =>
             {
                 try
