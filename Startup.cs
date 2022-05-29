@@ -68,12 +68,6 @@ namespace Coflnet.Sky.EventBroker
             services.AddJaeger();
             services.AddScoped<MessageService>();
             services.AddSingleton<AsyncUserLockService>();
-            services.AddSingleton<ProductsApi>(sp =>
-            {
-                var logger = sp.GetRequiredService<ILogger<ProductsApi>>();
-                logger.LogInformation("constructing products api wiht " + Configuration["PAYMENTS_BASE_URL"]);
-                return new ProductsApi(Configuration["PAYMENTS_BASE_URL"]);
-            });
             services.AddCoflService();
             services.AddResponseCaching();
             services.AddResponseCompression();
