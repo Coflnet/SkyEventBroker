@@ -70,7 +70,7 @@ namespace Coflnet.Sky.EventBroker
             services.AddSingleton<AsyncUserLockService>();
             services.AddSingleton<ProductsApi>(sp =>
             {
-                return new ProductsApi(Configuration["PAYMENT_BASE_URL"]);
+                return new ProductsApi(Configuration["PAYMENTS_BASE_URL"]);
             });
             services.AddCoflService();
             services.AddResponseCaching();
