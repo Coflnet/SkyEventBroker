@@ -57,7 +57,6 @@ namespace Coflnet.Sky.EventBroker.Services
             db.Messages.Add(message);
             await db.SaveChangesAsync();
 
-            Logger.LogInformation("sent message for {user} from source {source}", message.User.UserId, message.SourceType);
 
             return message;
         }

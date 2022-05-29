@@ -61,21 +61,24 @@ namespace Coflnet.Sky.EventBroker.Services
                     throw;
                 }
             }, stoppingToken, "sky-referral", AutoOffsetReset.Earliest, new TransactionDeserializer());
-            var verfify = Coflnet.Kafka.KafkaConsumer.Consume<VerificationEvent>(config["KAFKA_HOST"], config["TOPICS:VERIFIED"], async lp =>
+            var verfify = Coflnet.Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config["KAFKA_HOST"], config["TOPICS:VERIFIED"], async batch =>
             {
                 try
                 {
-
-                    using var scope = scopeFactory.CreateScope();
-                    var service = GetService(scope);
-                    await service.Verified(lp.UserId, lp.MinecraftUuid);
+                    foreach (var lp in batch)
+                    {
+                        logger.LogInformation("Verification event received for {user}", lp.UserId);
+                        using var scope = scopeFactory.CreateScope();
+                        var service = GetService(scope);
+                        await service.Verified(lp.UserId, lp.MinecraftUuid);
+                    }
                 }
                 catch (System.Exception e)
                 {
                     logger.LogError(e, "Error while processing verification");
                     throw;
                 }
-            }, stoppingToken, "sky-referral");
+            }, stoppingToken, "sky-referral", 2);
 
             var cleanUp = Task.Run(async () =>
             {
