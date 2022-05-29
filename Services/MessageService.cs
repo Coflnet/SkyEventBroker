@@ -70,7 +70,7 @@ namespace Coflnet.Sky.EventBroker.Services
         internal async Task NewTransaction(TransactionEvent lp)
         {
 
-            var message = $"Your topup of {lp.Amount} was received";
+            var message = $"Your topup of {FormatCoins(lp.Amount)} was received";
             var sourceType = "topup";
             if (lp.Amount < 0)
             {
@@ -109,6 +109,11 @@ namespace Coflnet.Sky.EventBroker.Services
                     }
                 }
             });
+        }
+
+        private static string FormatCoins(double amount)
+        {
+            return string.Format("{0:n0}", Convert.ToInt32(amount));
         }
 
         internal async Task<IEnumerable<MessageContainer>> GetMessages(string userId)
