@@ -96,6 +96,12 @@ namespace Coflnet.Sky.EventBroker.Services
             {
                 Logger.LogInformation("handling transaction for {user}", lp.UserId);
                 var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", default);
+
+                if(current == null)
+                {
+                    Logger.LogInformation($"No account info found for {u}");
+                    return;
+                }
                 if (config["PRODUCTS:PREMIUM"] == lp.ProductSlug || config["PRODUCTS:TEST_PREMIUM"] == lp.ProductSlug)
                 {
                     Logger.LogInformation("changing premium time for {user}", lp.UserId);
@@ -151,7 +157,12 @@ namespace Coflnet.Sky.EventBroker.Services
 
             await lockService.GetLock(userId, async (u) =>
             {
-                var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", default);
+                var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", ()=> null);
+                if(current == null)
+                {
+                    Logger.LogInformation($"No account info found for {userId}");
+                    return;
+                }
                 current.McIds.Add(minecraftUuid);
                 await settingsService.UpdateSetting(u, "accountInfo", current);
             });
