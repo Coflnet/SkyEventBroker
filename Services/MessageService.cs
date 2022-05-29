@@ -57,6 +57,8 @@ namespace Coflnet.Sky.EventBroker.Services
             db.Messages.Add(message);
             await db.SaveChangesAsync();
 
+            Logger.LogInformation("sent message for {user} from source {source}", message.User.UserId, message.SourceType);
+
             return message;
         }
 
@@ -93,9 +95,12 @@ namespace Coflnet.Sky.EventBroker.Services
 
             await lockService.GetLock(lp.UserId, async (u) =>
             {
+                Logger.LogInformation("handling transaction for {user}", lp.UserId);
                 var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", default);
                 if (config["PRODUCTS:PREMIUM"] == lp.ProductSlug || config["PRODUCTS:TEST_PREMIUM"] == lp.ProductSlug)
                 {
+                    Logger.LogInformation("changing premium time for {user}", lp.UserId);
+
                     var when = await premiumService.ExpiresWhen(lp.UserId);
                     if (when > DateTime.Now)
                     {
