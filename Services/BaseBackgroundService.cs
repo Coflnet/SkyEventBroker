@@ -82,7 +82,6 @@ namespace Coflnet.Sky.EventBroker.Services
                 logger.LogInformation("Starting cleanup task");
                 while (!stoppingToken.IsCancellationRequested)
                 {
-                    logger.LogInformation("cleaning");
                     await Task.Delay(TimeSpan.FromMinutes(1));
                     using var scope = scopeFactory.CreateScope();
                     var service = GetService(scope);
