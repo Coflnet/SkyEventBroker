@@ -72,7 +72,7 @@ namespace Coflnet.Sky.EventBroker.Services
 
             var message = $"Your topup of {lp.Amount} was received";
             var sourceType = "topup";
-            if (lp.Amount > 0)
+            if (lp.Amount < 0)
             {
                 var product = await productsApi.ProductsPProductSlugGetAsync(lp.ProductSlug);
                 message = $"You purchased {product.Title}";
