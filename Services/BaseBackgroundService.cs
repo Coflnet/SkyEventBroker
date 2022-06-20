@@ -60,7 +60,7 @@ namespace Coflnet.Sky.EventBroker.Services
                     logger.LogError(e, "Error while processing transaction");
                     throw;
                 }
-            }, stoppingToken, "sky-referral", AutoOffsetReset.Earliest, new TransactionDeserializer());
+            }, stoppingToken, "sky-eventbroker", AutoOffsetReset.Earliest, new TransactionDeserializer());
             var verfify = Coflnet.Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config["KAFKA_HOST"], config["TOPICS:VERIFIED"], async batch =>
             {
                 try
@@ -78,7 +78,7 @@ namespace Coflnet.Sky.EventBroker.Services
                     logger.LogError(e, "Error while processing verification");
                     throw;
                 }
-            }, stoppingToken, "sky-referral", 2);
+            }, stoppingToken, "sky-eventbroker", 2);
 
             var cleanUp = Task.Run(async () =>
             {
