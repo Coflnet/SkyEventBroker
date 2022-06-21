@@ -71,6 +71,10 @@ namespace Coflnet.Sky.EventBroker.Services
         {
 
             var message = $"Your topup of {FormatCoins(lp.Amount)} was received";
+            if (lp.Amount < 1800)
+                message = $"You received {FormatCoins(lp.Amount)}";
+            if (lp.ProductSlug == "transfer")
+                message = $"You received {FormatCoins(lp.Amount)} cofl coins from someone";
             var sourceType = "topup";
             if (lp.Amount < 0)
             {
@@ -97,7 +101,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 Logger.LogInformation("handling transaction for {user}", lp.UserId);
                 var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", default);
 
-                if(current == null)
+                if (current == null)
                 {
                     Logger.LogInformation($"No account info found for {u}");
                     return;
@@ -157,8 +161,8 @@ namespace Coflnet.Sky.EventBroker.Services
 
             await lockService.GetLock(userId, async (u) =>
             {
-                var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", ()=> null);
-                if(current == null)
+                var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", () => null);
+                if (current == null)
                 {
                     Logger.LogInformation($"No account info found for {userId}");
                     return;
