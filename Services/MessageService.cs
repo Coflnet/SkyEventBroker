@@ -75,7 +75,7 @@ namespace Coflnet.Sky.EventBroker.Services
             if (lp.Amount < 0)
             {
                 var product = await productsApi.ProductsPProductSlugGetAsync(lp.ProductSlug);
-                message = $"You purchased {product.Title}";
+                message = $"You purchased {product?.Title ?? lp.ProductSlug}";
                 sourceType = "purchase";
             }
 
