@@ -61,7 +61,7 @@ namespace Coflnet.Sky.EventBroker
 
             services.AddSingleton<StackExchange.Redis.ConnectionMultiplexer>((config) =>
             {
-                config.GetRequiredService<ILogger<Startup>>().LogInformation("Connecting to Redis with " + Configuration["REDIS_CONFIG"]);
+                config.GetRequiredService<ILogger<Startup>>().LogInformation($"Connecting to Redis with '{Configuration["REDIS_HOST"]}'");
                 return StackExchange.Redis.ConnectionMultiplexer.Connect(Configuration["REDIS_CONFIG"]);
             });
             services.AddHostedService<BaseBackgroundService>();
