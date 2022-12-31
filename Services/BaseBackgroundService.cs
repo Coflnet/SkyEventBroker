@@ -88,8 +88,16 @@ namespace Coflnet.Sky.EventBroker.Services
                     await Task.Delay(TimeSpan.FromMinutes(1));
                     using var scope = scopeFactory.CreateScope();
                     var service = GetService(scope);
-                    var count = await service.CleanDb();
-                    cleanupCount.Inc(count);
+                    try
+                    {
+                        var count = await service.CleanDb();
+                        cleanupCount.Inc(count);
+                    }
+                    catch (System.Exception e)
+                    {
+                        logger.LogError(e, "Error while cleaning db");
+                        throw;
+                    }
                 }
                 logger.LogInformation("Stopping cleanup task");
             });

@@ -5,9 +5,6 @@ using Coflnet.Payments.Client.Api;
 using Coflnet.Sky.EventBroker.Models;
 using Coflnet.Sky.EventBroker.Services;
 using Coflnet.Sky.Core;
-using Jaeger.Samplers;
-using Jaeger.Senders;
-using Jaeger.Senders.Thrift;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -16,8 +13,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
-using OpenTracing;
-using OpenTracing.Util;
 using Coflnet.Sky.Commands.Shared;
 using Prometheus;
 
