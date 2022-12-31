@@ -86,10 +86,10 @@ namespace Coflnet.Sky.EventBroker.Services
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     await Task.Delay(TimeSpan.FromMinutes(1));
-                    using var scope = scopeFactory.CreateScope();
-                    var service = GetService(scope);
                     try
                     {
+                        using var scope = scopeFactory.CreateScope();
+                        var service = GetService(scope);
                         var count = await service.CleanDb();
                         cleanupCount.Inc(count);
                     }
