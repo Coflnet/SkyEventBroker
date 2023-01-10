@@ -69,12 +69,13 @@ namespace Coflnet.Sky.EventBroker.Services
 
         internal async Task NewTransaction(TransactionEvent lp)
         {
-
             var message = $"Your topup of {FormatCoins(lp.Amount)} was received";
             if (lp.Amount < 1800)
                 message = $"You received {FormatCoins(lp.Amount)}";
             if (lp.ProductSlug == "transfer")
                 message = $"You received {FormatCoins(lp.Amount)} cofl coins from someone";
+            if (lp.ProductSlug == "compensation")
+                message = $"You received {FormatCoins(lp.Amount)} for {lp.Reference}";
             var sourceType = "topup";
             if (lp.Amount < 0)
             {
