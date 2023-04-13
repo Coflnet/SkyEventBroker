@@ -84,18 +84,19 @@ namespace Coflnet.Sky.EventBroker.Services
                 sourceType = "purchase";
             }
 
-            await AddMessage(new MessageContainer()
-            {
-                Data = lp,
-                Message = message,
-                Reference = "transaction" + lp.Id,
-                SourceType = sourceType,
-                Setings = new Models.Settings() { ConfirmDelivery = true, PlaySound = true },
-                User = new Models.User()
+            if (lp.Timestamp > DateTime.UtcNow - TimeSpan.FromHours(1))
+                await AddMessage(new MessageContainer()
                 {
-                    UserId = lp.UserId
-                }
-            });
+                    Data = lp,
+                    Message = message,
+                    Reference = "transaction" + lp.Id,
+                    SourceType = sourceType,
+                    Setings = new Models.Settings() { ConfirmDelivery = true, PlaySound = true },
+                    User = new Models.User()
+                    {
+                        UserId = lp.UserId
+                    }
+                });
 
             await lockService.GetLock(lp.UserId, async (u) =>
             {
