@@ -46,7 +46,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 await context.Database.MigrateAsync();
             }
             logger.LogInformation("Starting consumer");
-            var flipCons = Coflnet.Kafka.KafkaConsumer.Consume<TransactionEvent>(config["KAFKA_HOST"], config["TOPICS:TRANSACTIONS"], async lp =>
+            var flipCons = Coflnet.Kafka.KafkaConsumer.Consume<TransactionEvent>(config, config["TOPICS:TRANSACTIONS"], async lp =>
             {
                 try
                 {
@@ -61,7 +61,7 @@ namespace Coflnet.Sky.EventBroker.Services
                     throw;
                 }
             }, stoppingToken, "sky-eventbroker", AutoOffsetReset.Earliest, new TransactionDeserializer());
-            var verfify = Coflnet.Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config["KAFKA_HOST"], config["TOPICS:VERIFIED"], async batch =>
+            var verfify = Coflnet.Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config, config["TOPICS:VERIFIED"], async batch =>
             {
                 try
                 {
