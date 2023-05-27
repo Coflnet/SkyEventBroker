@@ -11,7 +11,7 @@ namespace Coflnet.Sky.EventBroker.Services
 
         public async Task GetLock(string userId, Func<string,Task> todo)
         {
-            var userLock = locks.GetOrAdd(userId, new SemaphoreSlim(1,1));
+            var userLock = locks.GetOrAdd(userId ?? "", new SemaphoreSlim(1,1));
             try
             {
                 await userLock.WaitAsync();
