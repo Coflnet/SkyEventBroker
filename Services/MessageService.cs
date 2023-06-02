@@ -78,6 +78,8 @@ namespace Coflnet.Sky.EventBroker.Services
                 message = $"You received {FormatCoins(lp.Amount)} CoflCoins from someone";
             if (lp.ProductSlug == "compensation")
                 message = $"You received {FormatCoins(lp.Amount)} CoflCoins as compensation for {lp.Reference}";
+            if(lp.ProductSlug == config["PRODUCTS:VERIFY_MC"])
+                return;
             var sourceType = "topup";
             if (lp.Amount < 0)
             {
