@@ -69,7 +69,7 @@ namespace Coflnet.Sky.EventBroker.Services
 
         internal async Task NewTransaction(TransactionEvent lp)
         {
-            if(lp.UserId == null)
+            if (lp.UserId == null)
                 return;
             var message = $"Your topup of {FormatCoins(lp.Amount)} CoflCoins was received";
             if (lp.Amount < 1800)
@@ -77,9 +77,14 @@ namespace Coflnet.Sky.EventBroker.Services
             if (lp.ProductSlug == "transfer")
                 message = $"You received {FormatCoins(lp.Amount)} CoflCoins from someone";
             if (lp.ProductSlug == "compensation")
-                message = $"You received {FormatCoins(lp.Amount)} CoflCoins as compensation for {lp.Reference}";
-            if(lp.ProductSlug == config["PRODUCTS:VERIFY_MC"])
+                if (lp.amount < 0)
+                    message = $"{FormatCoins(lp.Amount)} CoflCoins were deducted from your account for {lp.Reference}";
+                else
+                    message = $"You received {FormatCoins(lp.Amount)} CoflCoins as compensation for {lp.Reference}";
+            if (lp.ProductSlug == config["PRODUCTS:VERIFY_MC"])
                 return;
+            if (lp.ProductSlug == config["PRODUCTS:REFERRAL_BONUS"])
+                message = $"You received {FormatCoins(lp.Amount)} CoflCoins from the referral system";
             var sourceType = "topup";
             if (lp.Amount < 0)
             {
