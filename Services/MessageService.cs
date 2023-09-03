@@ -77,7 +77,7 @@ namespace Coflnet.Sky.EventBroker.Services
             if (lp.ProductSlug == "transfer")
                 message = $"You received {FormatCoins(lp.Amount)} CoflCoins from someone";
             if (lp.ProductSlug == "compensation")
-                if (lp.amount < 0)
+                if (lp.Amount < 0)
                     message = $"{FormatCoins(lp.Amount)} CoflCoins were deducted from your account for {lp.Reference}";
                 else
                     message = $"You received {FormatCoins(lp.Amount)} CoflCoins as compensation for {lp.Reference}";
