@@ -86,7 +86,13 @@ namespace Coflnet.Sky.EventBroker.Services
             if (lp.ProductSlug == config["PRODUCTS:REFERRAL_BONUS"])
                 message = $"You received {FormatCoins(lp.Amount)} CoflCoins from the referral system";
             var sourceType = "topup";
-            if (lp.Amount < 0)
+            if (lp.ProductSlug == config["PRODUCTS:TEST_PREMIUM"])
+            {
+                var product = await productsApi.ProductsPProductSlugGetAsync(lp.ProductSlug);
+                var timeInDays = TimeSpan.FromSeconds(product.OwnershipSeconds).TotalDays;
+                message = $"You received {timeInDays} days of test premium for verifying your minecraft account";
+            }
+            else if (lp.Amount < 0)
             {
                 var product = await productsApi.ProductsPProductSlugGetAsync(lp.ProductSlug);
                 message = $"You purchased {product?.Title ?? lp.ProductSlug}";
