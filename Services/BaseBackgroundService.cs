@@ -71,6 +71,8 @@ namespace Coflnet.Sky.EventBroker.Services
                         using var scope = scopeFactory.CreateScope();
                         var service = GetService(scope);
                         await service.Verified(lp.UserId, lp.MinecraftUuid);
+                        if (lp.ExistingConCount != 0)
+                            await service.VerifiedAlready(lp.UserId, lp.MinecraftUuid);
                     }
                 }
                 catch (System.Exception e)
@@ -128,6 +130,11 @@ namespace Coflnet.Sky.EventBroker.Services
             /// <value></value>
             [DataMember(Name = "uuid")]
             public string MinecraftUuid { get; set; }
+            /// <summary>
+            /// How many existing verifications are on this minecraft account
+            /// </summary>
+            [DataMember(Name = "existing")]
+            public int ExistingConCount { get; set; }
         }
 
 

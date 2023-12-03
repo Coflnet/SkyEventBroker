@@ -188,5 +188,21 @@ namespace Coflnet.Sky.EventBroker.Services
                 await settingsService.UpdateSetting(u, "accountInfo", current);
             });
         }
+
+        internal async Task VerifiedAlready(string userId, string minecraftUuid)
+        {
+            await AddMessage(new MessageContainer()
+            {
+                Data = minecraftUuid,
+                Message = "Since the verification bonus was already claimed for your minecraft account it won't be awarded again.",
+                Reference = minecraftUuid,
+                SourceType = "mcVerify",
+                Setings = new Models.Settings() { ConfirmDelivery = true, PlaySound = true },
+                User = new Models.User()
+                {
+                    UserId = userId
+                }
+            });
+        }
     }
 }
