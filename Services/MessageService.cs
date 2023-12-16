@@ -78,7 +78,7 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             catch (Exception e)
             {
-                Logger.LogError(e, "Error while saving message");
+                Logger.LogError(e, "Error while saving message {message}", JsonConvert.SerializeObject(message));
             }
 
             return message;
