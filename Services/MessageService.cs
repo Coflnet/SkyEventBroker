@@ -40,7 +40,7 @@ namespace Coflnet.Sky.EventBroker.Services
 
         public async Task<MessageContainer> AddMessage(MessageContainer message)
         {
-            if (message.Timestamp == default)
+            if (message.Timestamp == default || message.Timestamp < DateTime.Now - TimeSpan.FromDays(1))
             {
                 message.Timestamp = DateTime.Now;
             }
@@ -58,7 +58,7 @@ namespace Coflnet.Sky.EventBroker.Services
                     continue;
                 var url = webhook.Target;
                 var client = new System.Net.Http.HttpClient();
-                if(!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
+                if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
                 {
                     message.Link = "https://sky.coflnet.com";
                 }
@@ -67,12 +67,19 @@ namespace Coflnet.Sky.EventBroker.Services
                 Logger.LogInformation("sent to {webhook}\n{body}\n {response} {content}", url, body, response.StatusCode, response.Content.ReadAsStringAsync().Result);
             }
             // message has been received by someone and can be dropped
-            if (received > 0)
+            if (received > 0 || (!message.Setings?.StoreIfOffline ?? true))
                 return message;
 
             // not sure if someone received the message, store it
-            db.Messages.Add(message);
-            await db.SaveChangesAsync();
+            try
+            {
+                db.Messages.Add(message);
+                await db.SaveChangesAsync();
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e, "Error while saving message");
+            }
 
             return message;
         }
