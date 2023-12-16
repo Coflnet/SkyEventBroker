@@ -15,6 +15,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using Coflnet.Sky.Commands.Shared;
 using Prometheus;
+using System.Text.Json.Serialization;
 
 namespace Coflnet.Sky.EventBroker
 {
@@ -30,7 +31,9 @@ namespace Coflnet.Sky.EventBroker
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
-            services.AddControllers();
+            services.AddControllers()
+                .AddJsonOptions(options =>
+                    options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
             services.AddSwaggerGen(c =>
             {
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "SkyBase", Version = "v1" });
@@ -38,6 +41,8 @@ namespace Coflnet.Sky.EventBroker
                 var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
                 var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
                 c.IncludeXmlComments(xmlPath);
+                c.DocumentFilter<RemoveFilterFromApi>();
+                c.SchemaFilter<RemoveAuctionFromApi>();
             });
 
             // Replace with your server version and type.
@@ -49,7 +54,7 @@ namespace Coflnet.Sky.EventBroker
             // Replace 'YourDbContext' with the name of your own DbContext derived class.
             services.AddDbContext<EventDbContext>(
                 dbContextOptions => dbContextOptions
-                    .UseMySql(Configuration["DB_CONNECTION"], serverVersion)
+                    .UseNpgsql(Configuration["COCKROACH_DB_CONNECTION"])
                     //.EnableSensitiveDataLogging() // <-- These two calls are optional but help
                     .EnableDetailedErrors()       // <-- with debugging (remove for production).
             );

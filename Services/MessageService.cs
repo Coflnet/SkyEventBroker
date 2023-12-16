@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using Microsoft.Extensions.Logging;
 using Coflnet.Sky.Commands.Shared;
 using Microsoft.Extensions.Configuration;
+using System.Text;
 
 namespace Coflnet.Sky.EventBroker.Services
 {
@@ -49,6 +50,22 @@ namespace Coflnet.Sky.EventBroker.Services
             var serialized = JsonConvert.SerializeObject(message);
             var received = await pubsub.PublishAsync("uev" + message.User.UserId, serialized);
             Logger.LogInformation("published for {user} source {source} count {count}", message.User.UserId, message.SourceType, received);
+            var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
+            foreach (var sub in subs)
+            {
+                var webhook = sub.Targets.Select(t => t.Target).FirstOrDefault(t => t.Type == NotificationTarget.TargetType.DISCORD_WEBHOOK);
+                if (webhook == null)
+                    continue;
+                var url = webhook.Target;
+                var client = new System.Net.Http.HttpClient();
+                if(!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
+                {
+                    message.Link = "https://sky.coflnet.com";
+                }
+                var body = JsonConvert.SerializeObject(new { embeds = new[] { new { description = message.Message, url = message.Link, title = message.Summary } } });
+                var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
+                Logger.LogInformation("sent to {webhook}\n{body}\n {response} {content}", url, body, response.StatusCode, response.Content.ReadAsStringAsync().Result);
+            }
             // message has been received by someone and can be dropped
             if (received > 0)
                 return message;
@@ -56,7 +73,6 @@ namespace Coflnet.Sky.EventBroker.Services
             // not sure if someone received the message, store it
             db.Messages.Add(message);
             await db.SaveChangesAsync();
-
 
             return message;
         }

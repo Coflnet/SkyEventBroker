@@ -10,6 +10,7 @@ namespace Coflnet.Sky.EventBroker.Models
         public DbSet<MessageContainer> Messages { get; set; }
         public DbSet<ReceiveConfirm> Confirms { get; set; }
         public DbSet<NotificationTarget> NotificationTargets { get; set; }
+        public DbSet<Subscription> Subscriptions { get; set; }
 
         /// <summary>
         /// Creates a new instance of <see cref="EventDbContext"/>
@@ -35,6 +36,9 @@ namespace Coflnet.Sky.EventBroker.Models
             modelBuilder.Entity<User>(entity =>
             {
                 entity.HasIndex(e => e.UserId);
+            });
+            modelBuilder.Entity<Subscription>(entity=>{
+                entity.HasIndex(e=>new { e.UserId, e.SourceType });
             });
         }
     }

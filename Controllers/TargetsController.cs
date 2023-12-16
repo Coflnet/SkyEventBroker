@@ -12,7 +12,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
     /// </summary>
     [ApiController]
     [Route("[controller]")]
-    public class NotificationController : ControllerBase
+    public class TargetsController : ControllerBase
     {
         private EventDbContext context;
 
@@ -20,7 +20,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
         /// Creates a new instance of <see cref="NotificationTarget"/>
         /// </summary>
         /// <param name="context"></param>
-        public NotificationController(EventDbContext context)
+        public TargetsController(EventDbContext context)
         {
             this.context = context;
         }
@@ -47,6 +47,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
         [Route("user/{userId}")]
         public async Task CreateNotification(string userId, [FromBody] NotificationTarget target)
         {
+            target.UserId = userId;
             context.NotificationTargets.Add(target);
             await context.SaveChangesAsync();
         }
