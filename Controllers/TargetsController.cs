@@ -4,6 +4,9 @@ using Coflnet.Sky.EventBroker.Models;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
+using Coflnet.Sky.EventBroker.Services;
+using Coflnet.Sky.Core;
+using User = Coflnet.Sky.EventBroker.Models.User;
 
 namespace Coflnet.Sky.EventBroker.Controllers
 {
@@ -15,14 +18,17 @@ namespace Coflnet.Sky.EventBroker.Controllers
     public class TargetsController : ControllerBase
     {
         private EventDbContext context;
+        private MessageService messageService;
 
         /// <summary>
         /// Creates a new instance of <see cref="NotificationTarget"/>
         /// </summary>
         /// <param name="context"></param>
-        public TargetsController(EventDbContext context)
+        /// <param name="messageService"></param>
+        public TargetsController(EventDbContext context, MessageService messageService)
         {
             this.context = context;
+            this.messageService = messageService;
         }
 
 
@@ -32,7 +38,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
         /// <param name="userId"></param>
         /// <returns></returns>
         [HttpGet]
-        [Route("user/{userId}")]
+        [Route("{userId}")]
         public async Task<IEnumerable<NotificationTarget>> GetMessages(string userId)
         {
             return await context.NotificationTargets.Where(n => n.UserId == userId).ToListAsync();
@@ -44,12 +50,13 @@ namespace Coflnet.Sky.EventBroker.Controllers
         /// <param name="target"></param>
         /// <returns></returns>
         [HttpPost]
-        [Route("user/{userId}")]
-        public async Task CreateNotification(string userId, [FromBody] NotificationTarget target)
+        [Route("{userId}")]
+        public async Task<NotificationTarget> CreateNotification(string userId, [FromBody] NotificationTarget target)
         {
             target.UserId = userId;
             context.NotificationTargets.Add(target);
             await context.SaveChangesAsync();
+            return target;
         }
         /// <summary>
         /// Deletes a notification target for an user
@@ -58,7 +65,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
         /// <param name="target"></param>
         /// <returns></returns>
         [HttpDelete]
-        [Route("user/{userId}")]
+        [Route("{userId}")]
         public async Task DeleteNotification(string userId, [FromBody] NotificationTarget target)
         {
             context.NotificationTargets.Remove(target);
@@ -71,11 +78,45 @@ namespace Coflnet.Sky.EventBroker.Controllers
         /// <param name="target"></param>
         /// <returns></returns>
         [HttpPut]
-        [Route("user/{userId}")]
+        [Route("{userId}")]
         public async Task UpdateNotification(string userId, [FromBody] NotificationTarget target)
         {
             context.NotificationTargets.Update(target);
             await context.SaveChangesAsync();
+        }
+
+        /// <summary>
+        /// Sends a test notification to the target
+        /// </summary>
+        /// <param name="userId"></param>
+        /// <param name="target"></param>
+        /// <returns></returns>
+        /// <response code="200">Notification was sent</response>
+        /// <response code="404">Target not found</response>
+        /// <response code="500">Error while sending notification</response>
+        [HttpPost]
+        [Route("{userId}/test")]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(404)]
+        [ProducesResponseType(500)]
+        public async Task SendTestNotification(string userId, [FromBody] NotificationTarget target)
+        {
+            var current = await context.NotificationTargets.FirstOrDefaultAsync(t => t.Id == target.Id);
+            if (current == null)
+                return;
+            if (current.UserId != userId)
+                throw new CoflnetException("not-authorized", "You are not authorized to access this target");
+
+            await messageService.SendToTarget(new MessageContainer()
+            {
+                Message = "This is a test notification from sky.coflnet.com",
+                Summary = "Test Notification",
+                Link = "https://sky.coflnet.com",
+                User = new User()
+                {
+                    UserId = userId
+                },
+            }, current);
         }
     }
 }

@@ -53,18 +53,10 @@ namespace Coflnet.Sky.EventBroker.Services
             var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
             foreach (var sub in subs)
             {
-                var webhook = sub.Targets.Select(t => t.Target).FirstOrDefault(t => t.Type == NotificationTarget.TargetType.DISCORD_WEBHOOK);
-                if (webhook == null)
-                    continue;
-                var url = webhook.Target;
-                var client = new System.Net.Http.HttpClient();
-                if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
+                foreach (var target in sub.Targets)
                 {
-                    message.Link = "https://sky.coflnet.com";
+                    await SendToTarget(message, target.Target);
                 }
-                var body = JsonConvert.SerializeObject(new { embeds = new[] { new { description = message.Message, url = message.Link, title = message.Summary } } });
-                var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
-                Logger.LogInformation("sent to {webhook}\n{body}\n {response} {content}", url, body, response.StatusCode, response.Content.ReadAsStringAsync().Result);
             }
             // message has been received by someone and can be dropped
             if (received > 0 || (!message.Setings?.StoreIfOffline ?? true))
@@ -82,6 +74,30 @@ namespace Coflnet.Sky.EventBroker.Services
             }
 
             return message;
+        }
+
+        /// <summary>
+        /// Sends the message to the target
+        /// </summary>
+        /// <param name="message"></param>
+        /// <param name="target"></param>
+        /// <returns>If the message was sent successfully</returns>
+        public async Task<bool> SendToTarget(MessageContainer message, NotificationTarget target)
+        {
+            if (target.Type == NotificationTarget.TargetType.DISCORD_WEBHOOK)
+            {
+                var url = target.Target;
+                var client = new System.Net.Http.HttpClient();
+                if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
+                {
+                    message.Link = "https://sky.coflnet.com";
+                }
+                var body = JsonConvert.SerializeObject(new { embeds = new[] { new { description = message.Message, url = message.Link, title = message.Summary } } });
+                var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
+                Logger.LogInformation("sent to {webhook}\n{body}\n {response} {content}", url, body, response.StatusCode, response.Content.ReadAsStringAsync().Result);
+                return response.StatusCode <= System.Net.HttpStatusCode.NoContent;
+            }
+            return false;
         }
 
         internal Task Received(string refence)

@@ -30,7 +30,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
             return dbVersion.Select(s => new PublicSubscription(s));
         }
         [HttpPost]
-        public async Task CreateSubscription(string userId, [FromBody] PublicSubscription target)
+        public async Task<PublicSubscription> CreateSubscription(string userId, [FromBody] PublicSubscription target)
         {
             target.Id = 0;
             var subscription = new Subscription()
@@ -46,6 +46,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
             };
             context.Subscriptions.Add(subscription);
             await context.SaveChangesAsync();
+            return new PublicSubscription(subscription);
         }
         [HttpDelete]
         public async Task DeleteSubscription(string userId, [FromBody] PublicSubscription target)
