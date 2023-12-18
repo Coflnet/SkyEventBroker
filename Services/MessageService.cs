@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using Coflnet.Sky.Commands.Shared;
 using Microsoft.Extensions.Configuration;
 using System.Text;
+using RestSharp;
 
 namespace Coflnet.Sky.EventBroker.Services
 {
@@ -86,18 +87,86 @@ namespace Coflnet.Sky.EventBroker.Services
         {
             if (target.Type == NotificationTarget.TargetType.DISCORD_WEBHOOK)
             {
-                var url = target.Target;
-                var client = new System.Net.Http.HttpClient();
-                if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
-                {
-                    message.Link = "https://sky.coflnet.com";
-                }
-                var body = JsonConvert.SerializeObject(new { embeds = new[] { new { description = message.Message, url = message.Link, title = message.Summary } } });
-                var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
-                Logger.LogInformation("sent to {webhook}\n{body}\n {response} {content}", url, body, response.StatusCode, response.Content.ReadAsStringAsync().Result);
-                return response.StatusCode <= System.Net.HttpStatusCode.NoContent;
+                return await SendWebhook(message, target);
+            }
+            if (target.Type == NotificationTarget.TargetType.FIREBASE)
+            {
+                return await SendFirebase(message, target);
             }
             return false;
+        }
+
+        /// <summary>
+        /// Attempts to send a notification
+        /// </summary>
+        /// <param name="message"></param>
+        /// <param name="target"></param>
+        /// <returns><c>true</c> when the notification was sent successfully</returns>
+        public async Task<bool> SendFirebase(MessageContainer message, NotificationTarget target)
+        {
+            string firebaseKey = config["FIREBASE_KEY"];
+            string firebaseSenderId = config["FIREBASE_SENDER_ID"];
+            try
+            {
+                var notification = new FirebaseNotification(message.Summary, message.Message, message.Link, message.ImageLink, null, message.Data as Dictionary<string, string>);
+                // Get the server key from FCM console
+                var serverKey = string.Format("key={0}", firebaseKey);
+
+                // Get the sender id from FCM console
+                var senderId = string.Format("id={0}", firebaseSenderId);
+
+                //var icon = "https://sky.coflnet.com/logo192.png";
+                var data = notification.data;
+                var payload = new
+                {
+                    target.Target, // Recipient device token
+                    notification,
+                    data
+                };
+
+                // Using Newtonsoft.Json
+                var jsonBody = JsonConvert.SerializeObject(payload);
+                var client = new RestClient("https://fcm.googleapis.com");
+                var request = new RestRequest("fcm/send", Method.Post);
+
+                request.AddHeader("Authorization", serverKey);
+                request.AddHeader("Sender", senderId); request.AddHeader("Content-Type", "application/json");
+                request.AddParameter("application/json", jsonBody, ParameterType.RequestBody);
+                var response = await client.ExecuteAsync(request);
+
+
+                if (response.StatusCode != System.Net.HttpStatusCode.OK)
+                {
+                    Console.WriteLine(JsonConvert.SerializeObject(response.Content));
+                }
+
+                dynamic res = JsonConvert.DeserializeObject(response.Content);
+                var success = res.success == 1;
+                if (!success)
+                    dev.Logger.Instance.Error(response.Content);
+
+                return success;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Couldn't send notification");
+            }
+
+            return false;
+        }
+
+        private async Task<bool> SendWebhook(MessageContainer message, NotificationTarget target)
+        {
+            var url = target.Target;
+            var client = new System.Net.Http.HttpClient();
+            if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
+            {
+                message.Link = "https://sky.coflnet.com";
+            }
+            var body = JsonConvert.SerializeObject(new { embeds = new[] { new { description = message.Message, url = message.Link, title = message.Summary } } });
+            var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
+            Logger.LogInformation("sent to {webhook}\n{body}\n {response} {content}", url, body, response.StatusCode, response.Content.ReadAsStringAsync().Result);
+            return response.StatusCode <= System.Net.HttpStatusCode.NoContent;
         }
 
         internal Task Received(string refence)
