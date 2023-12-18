@@ -13,6 +13,7 @@ using Coflnet.Sky.Core;
 using Coflnet.Payments.Client.Model;
 using System;
 using System.Runtime.Serialization;
+using User = Coflnet.Sky.EventBroker.Models.User;
 
 namespace Coflnet.Sky.EventBroker.Services
 {
@@ -46,7 +47,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 await context.Database.MigrateAsync();
             }
             logger.LogInformation("Starting consumer");
-            var flipCons = Coflnet.Kafka.KafkaConsumer.Consume<TransactionEvent>(config, config["TOPICS:TRANSACTIONS"], async lp =>
+            var flipCons = Kafka.KafkaConsumer.Consume(config, config["TOPICS:TRANSACTIONS"], async lp =>
             {
                 try
                 {
@@ -55,13 +56,13 @@ namespace Coflnet.Sky.EventBroker.Services
                     var service = GetService(scope);
                     await service.NewTransaction(lp);
                 }
-                catch (System.Exception e)
+                catch (Exception e)
                 {
                     logger.LogError(e, "Error while processing transaction");
                     throw;
                 }
             }, stoppingToken, "sky-eventbroker", AutoOffsetReset.Earliest, new TransactionDeserializer());
-            var verfify = Coflnet.Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config, config["TOPICS:VERIFIED"], async batch =>
+            var verfify = Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config, config["TOPICS:VERIFIED"], async batch =>
             {
                 try
                 {
@@ -75,10 +76,24 @@ namespace Coflnet.Sky.EventBroker.Services
                             await service.VerifiedAlready(lp.UserId, lp.MinecraftUuid);
                     }
                 }
-                catch (System.Exception e)
+                catch (Exception e)
                 {
                     logger.LogError(e, "Error while processing verification");
                     throw;
+                }
+            }, stoppingToken, "sky-eventbroker", 2);
+            var notification = Kafka.KafkaConsumer.ConsumeBatch<string>(config, config["TOPICS:NOTIFICATIONS"], async batch =>
+            {
+                try
+                {
+                    foreach (var lp in batch)
+                    {
+                        using IServiceScope scope = await ProcessNotification(lp);
+                    }
+                }
+                catch (Exception e)
+                {
+                    logger.LogError(e, "Error while processing notification");
                 }
             }, stoppingToken, "sky-eventbroker", 2);
 
@@ -95,7 +110,7 @@ namespace Coflnet.Sky.EventBroker.Services
                         var count = await service.CleanDb();
                         cleanupCount.Inc(count);
                     }
-                    catch (System.Exception e)
+                    catch (Exception e)
                     {
                         logger.LogError(e, "Error while cleaning db");
                         throw;
@@ -110,9 +125,32 @@ namespace Coflnet.Sky.EventBroker.Services
                 Console.WriteLine("quiting");
             });
 
-            await Task.WhenAny(flipCons, verfify, cleanUp);
+            await Task.WhenAny(flipCons, verfify, cleanUp, notification);
             logger.LogError("One task exited");
             throw new Exception("a background task exited");
+        }
+
+        private async Task<IServiceScope> ProcessNotification(string lp)
+        {
+            var notification = Newtonsoft.Json.JsonConvert.DeserializeObject<FirebaseNotification>(lp);
+            logger.LogInformation("Notification event received for {user}", notification.data["userId"]);
+            var scope = scopeFactory.CreateScope();
+            var service = GetService(scope);
+            await service.AddMessage(new MessageContainer()
+            {
+                Message = notification.body,
+                SourceSubId = notification.data["subId"],
+                ImageLink = notification.icon,
+                Data = notification.data,
+                SourceType = "subscription",
+                Link = notification.click_action,
+                Summary = notification.title,
+                User = new User()
+                {
+                    UserId = notification.data["userId"]
+                }
+            });
+            return scope;
         }
 
         [DataContract]
@@ -138,11 +176,11 @@ namespace Coflnet.Sky.EventBroker.Services
         }
 
 
-        public class TransactionDeserializer : IDeserializer<Payments.Client.Model.TransactionEvent>
+        public class TransactionDeserializer : IDeserializer<TransactionEvent>
         {
-            public Payments.Client.Model.TransactionEvent Deserialize(ReadOnlySpan<byte> data, bool isNull, SerializationContext context)
+            public TransactionEvent Deserialize(ReadOnlySpan<byte> data, bool isNull, SerializationContext context)
             {
-                return Newtonsoft.Json.JsonConvert.DeserializeObject<Payments.Client.Model.TransactionEvent>(System.Text.Encoding.UTF8.GetString(data));
+                return Newtonsoft.Json.JsonConvert.DeserializeObject<TransactionEvent>(System.Text.Encoding.UTF8.GetString(data));
             }
         }
 
