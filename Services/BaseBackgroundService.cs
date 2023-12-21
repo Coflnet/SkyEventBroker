@@ -125,6 +125,9 @@ namespace Coflnet.Sky.EventBroker.Services
 
             await Task.WhenAny(flipCons, verfify, cleanUp, notification);
             logger.LogError("One task exited");
+            await notification;
+            logger.LogError("Notification task exited");
+
             throw new Exception("a background task exited");
         }
 
