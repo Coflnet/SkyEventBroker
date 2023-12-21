@@ -71,9 +71,7 @@ namespace Coflnet.Sky.EventBroker.Services
                         logger.LogInformation("Verification event received for {user}", lp.UserId);
                         using var scope = scopeFactory.CreateScope();
                         var service = GetService(scope);
-                        await service.Verified(lp.UserId, lp.MinecraftUuid);
-                        if (lp.ExistingConCount != 0)
-                            await service.VerifiedAlready(lp.UserId, lp.MinecraftUuid);
+                        await service.Verified(lp.UserId, lp.MinecraftUuid, lp.ExistingConCount);
                     }
                 }
                 catch (Exception e)

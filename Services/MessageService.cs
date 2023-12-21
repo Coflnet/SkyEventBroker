@@ -269,7 +269,7 @@ namespace Coflnet.Sky.EventBroker.Services
             return remCount;
         }
 
-        internal async Task Verified(string userId, string minecraftUuid)
+        internal async Task Verified(string userId, string minecraftUuid, int verifiedCount)
         {
             await AddMessage(new MessageContainer()
             {
@@ -283,6 +283,12 @@ namespace Coflnet.Sky.EventBroker.Services
                     UserId = userId
                 }
             });
+
+            if (verifiedCount != 0)
+            {
+                await VerifiedAlready(userId, minecraftUuid);
+                return;
+            }
 
             await lockService.GetLock(userId, async (u) =>
             {
