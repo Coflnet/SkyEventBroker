@@ -55,15 +55,17 @@ namespace Coflnet.Sky.EventBroker
             services.AddDbContext<EventDbContext>(
                 dbContextOptions => dbContextOptions
                     .UseNpgsql(Configuration["COCKROACH_DB_CONNECTION"])
-                    //.EnableSensitiveDataLogging() // <-- These two calls are optional but help
+                    .EnableSensitiveDataLogging() // <-- These two calls are optional but help
                     .EnableDetailedErrors()       // <-- with debugging (remove for production).
             );
 
-            services.AddSingleton<StackExchange.Redis.ConnectionMultiplexer>((config) =>
+            services.AddSingleton((config) =>
             {
                 config.GetRequiredService<ILogger<Startup>>().LogInformation($"Connecting to Redis with '{Configuration["REDIS_HOST"]}'");
                 return StackExchange.Redis.ConnectionMultiplexer.Connect(Configuration["REDIS_HOST"]);
             });
+            services.AddSingleton<ScheduleService>();
+            services.AddHostedService(s => s.GetRequiredService<ScheduleService>());
             services.AddHostedService<BaseBackgroundService>();
             services.AddJaeger(Configuration);
             services.AddScoped<MessageService>();

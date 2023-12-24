@@ -38,9 +38,10 @@ public class NotificationTarget
         UNKOWN,
         WEBHOOK,
         DISCORD,
-        DISCORD_WEBHOOK,
+        DiscordWebhook,
         FIREBASE,
-        EMAIL
+        EMAIL,
+        InGame
     }
 
     public enum NotifyWhen

@@ -40,7 +40,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
         }
 
         /// <summary>
-        /// Tracks a flip
+        /// Sends a notification to the user
         /// </summary>
         /// <param name="refence"></param>
         /// <returns></returns>

@@ -47,11 +47,13 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             if (string.IsNullOrEmpty(message.Reference))
                 message.Reference = Guid.NewGuid().ToString().Replace("-", "");
+            var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
             var pubsub = connection.GetSubscriber();
             var serialized = JsonConvert.SerializeObject(message);
-            var received = await pubsub.PublishAsync("uev" + message.User.UserId, serialized);
-            Logger.LogInformation("published for {user} source {source} count {count}", message.User.UserId, message.SourceType, received);
-            var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
+            var receivedCount = 1L;
+            if (!IsInGameDeactivated(subs))
+                receivedCount = await pubsub.PublishAsync(RedisChannel.Literal("uev" + message.User.UserId), serialized);
+            Logger.LogInformation("published for {user} source {source} count {count}", message.User.UserId, message.SourceType, receivedCount);
             foreach (var sub in subs)
             {
                 foreach (var target in sub.Targets)
@@ -60,7 +62,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 }
             }
             // message has been received by someone and can be dropped
-            if (received > 0 || (!message.Setings?.StoreIfOffline ?? true))
+            if (receivedCount > 0 || (!message.Setings?.StoreIfOffline ?? true) || message.Id != 0)
                 return message;
 
             // not sure if someone received the message, store it
@@ -77,6 +79,11 @@ namespace Coflnet.Sky.EventBroker.Services
             return message;
         }
 
+        private static bool IsInGameDeactivated(List<Subscription> subs)
+        {
+            return subs.Any(s => s.Targets.Any(t => t.Target.Type == NotificationTarget.TargetType.InGame && t.Target.When.HasFlag(NotificationTarget.NotifyWhen.NEVER)));
+        }
+
         /// <summary>
         /// Sends the message to the target
         /// </summary>
@@ -85,7 +92,7 @@ namespace Coflnet.Sky.EventBroker.Services
         /// <returns>If the message was sent successfully</returns>
         public async Task<bool> SendToTarget(MessageContainer message, NotificationTarget target)
         {
-            if (target.Type == NotificationTarget.TargetType.DISCORD_WEBHOOK)
+            if (target.Type == NotificationTarget.TargetType.DiscordWebhook)
             {
                 return await SendWebhook(message, target);
             }

@@ -35,7 +35,7 @@ namespace Coflnet.Sky.EventBroker.Models
         public User User { get; set; }
         public Settings Setings { get; set; }
 
-        [Timestamp]
-        public DateTime Timestamp { get; set; }
+        [Timestamp] // auto set on insert or update
+        public DateTime? Timestamp { get; set; }
     }
 }
