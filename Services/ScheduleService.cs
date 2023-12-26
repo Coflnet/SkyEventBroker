@@ -34,6 +34,8 @@ public class ScheduleService : BackgroundService
                 .Include(s => s.Message).ThenInclude(m => m.User)
                 .Include(m => m.Message).ThenInclude(m => m.Setings)
                 .ToListAsync();
+            if(messages.Count == 0)
+                continue;
             foreach (var message in messages)
             {
                 var messageService = scope.ServiceProvider.GetRequiredService<MessageService>();
@@ -66,7 +68,8 @@ public class ScheduleService : BackgroundService
     {
         using var scope = scopeFactory.CreateScope();
         using var db = scope.ServiceProvider.GetRequiredService<EventDbContext>();
-        return await db.ScheduledMessages.Where(m => m.UserId == userId).ToListAsync();
+        return await db.ScheduledMessages.Where(m => m.UserId == userId)
+                .Include(m => m.Message).ThenInclude(m => m.Setings).ToListAsync();
     }
 
     public async Task RemoveMessage(string userId, int id)
