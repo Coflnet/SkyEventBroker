@@ -8,7 +8,6 @@ public class NotificationTarget
     /// Primary Key for database
     /// </summary>
     /// <value></value>
-    [JsonIgnore]
     public int Id { get; set; }
     /// <summary>
     /// The target to send the notification to
