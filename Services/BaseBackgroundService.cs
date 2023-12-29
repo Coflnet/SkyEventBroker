@@ -81,17 +81,20 @@ namespace Coflnet.Sky.EventBroker.Services
                     throw;
                 }
             }, stoppingToken, "sky-eventbroker", 2);
-            var notification = Kafka.KafkaConsumer.Consume(config, config["TOPICS:NOTIFICATIONS"], async lp =>
+            var notification = Kafka.KafkaConsumer.ConsumeBatch(config, config["TOPICS:NOTIFICATIONS"], async lp =>
             {
                 try
                 {
-                    using IServiceScope scope = await ProcessNotification(lp);
+                    await Parallel.ForEachAsync(lp, async (item, c) =>
+                    {
+                        await ProcessNotification(item);
+                    });
                 }
                 catch (Exception e)
                 {
                     logger.LogError(e, "Error while processing notification");
                 }
-            }, stoppingToken, "sky-eventbroker", AutoOffsetReset.Earliest, new NotificationDeserializer());
+            }, stoppingToken, "sky-eventbroker", 3, AutoOffsetReset.Latest, new NotificationDeserializer());
 
             var cleanUp = Task.Run(async () =>
             {
@@ -129,15 +132,15 @@ namespace Coflnet.Sky.EventBroker.Services
             throw new Exception("a background task exited");
         }
 
-        private async Task<IServiceScope> ProcessNotification(FirebaseNotification notification)
+        private async Task ProcessNotification(FirebaseNotification notification)
         {
             if (!(notification.data?.TryGetValue("userId", out var userId) ?? false))
             {
                 logger.LogError("Notification event received without userId, {notification}", JsonConvert.SerializeObject(notification));
-                return null;
+                return;
             }
             logger.LogInformation("Notification event received for {user}", userId);
-            var scope = scopeFactory.CreateScope();
+            using var scope = scopeFactory.CreateScope();
             var service = GetService(scope);
             await service.AddMessage(new MessageContainer()
             {
@@ -153,7 +156,6 @@ namespace Coflnet.Sky.EventBroker.Services
                     UserId = userId
                 }
             });
-            return scope;
         }
 
         [DataContract]
