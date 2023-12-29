@@ -80,20 +80,17 @@ namespace Coflnet.Sky.EventBroker.Services
                     throw;
                 }
             }, stoppingToken, "sky-eventbroker", 2);
-            var notification = Kafka.KafkaConsumer.ConsumeBatch<string>(config, config["TOPICS:NOTIFICATIONS"], async batch =>
+            var notification = Kafka.KafkaConsumer.Consume(config, config["TOPICS:NOTIFICATIONS"], async lp =>
             {
                 try
                 {
-                    foreach (var lp in batch)
-                    {
-                        using IServiceScope scope = await ProcessNotification(lp);
-                    }
+                    using IServiceScope scope = await ProcessNotification(lp);
                 }
                 catch (Exception e)
                 {
                     logger.LogError(e, "Error while processing notification");
                 }
-            }, stoppingToken, "sky-eventbroker", 2);
+            }, stoppingToken, "sky-eventbroker", AutoOffsetReset.Earliest, new NotificationDeserializer());
 
             var cleanUp = Task.Run(async () =>
             {
@@ -131,9 +128,8 @@ namespace Coflnet.Sky.EventBroker.Services
             throw new Exception("a background task exited");
         }
 
-        private async Task<IServiceScope> ProcessNotification(string lp)
+        private async Task<IServiceScope> ProcessNotification(FirebaseNotification notification)
         {
-            var notification = Newtonsoft.Json.JsonConvert.DeserializeObject<FirebaseNotification>(lp);
             logger.LogInformation("Notification event received for {user}", notification.data["userId"]);
             var scope = scopeFactory.CreateScope();
             var service = GetService(scope);
@@ -182,6 +178,13 @@ namespace Coflnet.Sky.EventBroker.Services
             public TransactionEvent Deserialize(ReadOnlySpan<byte> data, bool isNull, SerializationContext context)
             {
                 return Newtonsoft.Json.JsonConvert.DeserializeObject<TransactionEvent>(System.Text.Encoding.UTF8.GetString(data));
+            }
+        }
+        public class NotificationDeserializer : IDeserializer<FirebaseNotification>
+        {
+            public FirebaseNotification Deserialize(ReadOnlySpan<byte> data, bool isNull, SerializationContext context)
+            {
+                return Newtonsoft.Json.JsonConvert.DeserializeObject<FirebaseNotification>(System.Text.Encoding.UTF8.GetString(data));
             }
         }
 
