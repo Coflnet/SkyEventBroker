@@ -130,7 +130,12 @@ namespace Coflnet.Sky.EventBroker.Services
 
         private async Task<IServiceScope> ProcessNotification(FirebaseNotification notification)
         {
-            logger.LogInformation("Notification event received for {user}", notification.data["userId"]);
+            if (!notification.data.TryGetValue("userId", out var userId))
+            {
+                logger.LogError("Notification event received without userId");
+                return null;
+            }
+            logger.LogInformation("Notification event received for {user}", userId);
             var scope = scopeFactory.CreateScope();
             var service = GetService(scope);
             await service.AddMessage(new MessageContainer()
@@ -144,7 +149,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 Summary = notification.title,
                 User = new User()
                 {
-                    UserId = notification.data["userId"]
+                    UserId = userId
                 }
             });
             return scope;
