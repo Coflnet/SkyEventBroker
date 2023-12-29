@@ -34,7 +34,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
         /// <returns></returns>
         [HttpPost]
         [Route("confirm/{AuctionId}")]
-        public async Task TrackFlip(string refence)
+        public async Task Received(string refence)
         {
             await service.Received(refence);
         }

@@ -14,6 +14,7 @@ using Coflnet.Payments.Client.Model;
 using System;
 using System.Runtime.Serialization;
 using User = Coflnet.Sky.EventBroker.Models.User;
+using Newtonsoft.Json;
 
 namespace Coflnet.Sky.EventBroker.Services
 {
@@ -130,9 +131,9 @@ namespace Coflnet.Sky.EventBroker.Services
 
         private async Task<IServiceScope> ProcessNotification(FirebaseNotification notification)
         {
-            if (!notification.data.TryGetValue("userId", out var userId))
+            if (!(notification.data?.TryGetValue("userId", out var userId) ?? false))
             {
-                logger.LogError("Notification event received without userId");
+                logger.LogError("Notification event received without userId, {notification}", JsonConvert.SerializeObject(notification));
                 return null;
             }
             logger.LogInformation("Notification event received for {user}", userId);
