@@ -12,6 +12,7 @@ using Coflnet.Sky.Commands.Shared;
 using Microsoft.Extensions.Configuration;
 using System.Text;
 using RestSharp;
+using System.Text.RegularExpressions;
 
 namespace Coflnet.Sky.EventBroker.Services
 {
@@ -56,6 +57,8 @@ namespace Coflnet.Sky.EventBroker.Services
             Logger.LogInformation("published for {user} source {source} count {count}", message.User.UserId, message.SourceType, receivedCount);
             foreach (var sub in subs)
             {
+                if(!IsAllowed(message, sub))
+                    continue;
                 foreach (var target in sub.Targets)
                 {
                     await SendToTarget(message, target.Target);
@@ -77,6 +80,15 @@ namespace Coflnet.Sky.EventBroker.Services
             }
 
             return message;
+        }
+
+        private static bool IsAllowed(MessageContainer message, Subscription sub)
+        {
+            if (sub.SourceSubIdRegex == null)
+                return true;
+            // only .* is allowed as wildcard, to avoid getting DOSed with regex
+            var converted = "^" + Regex.Escape(sub.SourceSubIdRegex).Replace(".\\*", ".*") + "$";
+            return Regex.IsMatch(message.SourceType, converted, RegexOptions.NonBacktracking);
         }
 
         private static bool IsInGameDeactivated(List<Subscription> subs)

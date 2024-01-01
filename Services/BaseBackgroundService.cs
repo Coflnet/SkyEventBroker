@@ -139,7 +139,6 @@ namespace Coflnet.Sky.EventBroker.Services
                 logger.LogError("Notification event received without userId, {notification}", JsonConvert.SerializeObject(notification));
                 return;
             }
-            logger.LogInformation("Notification event received for {user}", userId);
             using var scope = scopeFactory.CreateScope();
             var service = GetService(scope);
             await service.AddMessage(new MessageContainer()
@@ -156,6 +155,7 @@ namespace Coflnet.Sky.EventBroker.Services
                     UserId = userId
                 }
             });
+            logger.LogInformation("Notification event received for {user}", userId);
         }
 
         [DataContract]
