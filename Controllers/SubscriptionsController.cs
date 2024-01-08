@@ -35,7 +35,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
             target.Id = 0;
             var subscription = new Subscription()
             {
-                SourceType = target.SourceType,
+                SourceType = target.SourceType.ToString(),
                 UserId = userId,
                 Id = target.Id,
                 Targets = target.Targets.Select(t => new TargetConnection()
