@@ -3,9 +3,9 @@ The eventbroker aggregates events from different sources and creates a unified e
 Depending on user settings, the eventbroker can send notifications to different channels.
 Planned channels are:
 - Email
-- PushNotification
+- PushNotification - via firebase
 - Webhook
-- Discord
+- Discord webhook - available
 - Minecraft chat - available
 
 ## Deploying
