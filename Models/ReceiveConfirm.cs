@@ -12,7 +12,6 @@ namespace Coflnet.Sky.EventBroker.Models
         public int Id { get; set; }
         [MaxLength(32)]
         public string Reference {get;set;}
-        [System.ComponentModel.DataAnnotations.Timestamp]
         [DataMember(Name = "timestamp")]
         public DateTime Timestamp { get; set; }
     }

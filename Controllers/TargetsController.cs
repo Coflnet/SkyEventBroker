@@ -68,6 +68,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
         [Route("{userId}")]
         public async Task DeleteNotification(string userId, [FromBody] NotificationTarget target)
         {
+            target.UserId = userId;
             context.NotificationTargets.Remove(target);
             await context.SaveChangesAsync();
         }
@@ -81,6 +82,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
         [Route("{userId}")]
         public async Task UpdateNotification(string userId, [FromBody] NotificationTarget target)
         {
+            target.UserId = userId;
             context.NotificationTargets.Update(target);
             await context.SaveChangesAsync();
         }

@@ -190,7 +190,8 @@ namespace Coflnet.Sky.EventBroker.Services
 
         internal Task Received(string refence)
         {
-            db.Confirms.Add(new ReceiveConfirm() { Reference = refence, Timestamp = DateTime.UtcNow });
+            var confirm = new ReceiveConfirm() { Reference = refence, Timestamp = DateTime.UtcNow };
+            db.Confirms.Add(confirm);
             return db.SaveChangesAsync();
         }
 
