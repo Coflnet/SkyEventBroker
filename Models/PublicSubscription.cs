@@ -25,6 +25,7 @@ public class PublicSubscription
             Targets.Add(new TargetLink
             {
                 Name = t.Target?.Name,
+                Id = t.Target.Id,
                 Priority = t.Priority,
                 IsDisabled = t.IsDisabled
             });
@@ -57,7 +58,8 @@ public class PublicSubscription
 
     public class TargetLink
     {
-        public string Name { get; set; }
+        public string? Name { get; set; }
+        public int Id { get; set; }
         public int Priority { get; set; }
         public bool IsDisabled { get; set; }
     }

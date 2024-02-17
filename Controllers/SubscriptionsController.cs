@@ -40,7 +40,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
                 Id = target.Id,
                 Targets = target.Targets.Select(t => new TargetConnection()
                 {
-                    Target = context.NotificationTargets.Where(nt=>nt.UserId == userId && nt.Name == t.Name).FirstOrDefault(),
+                    Target = context.NotificationTargets.Where(nt=>nt.UserId == userId && nt.Id == t.Id).FirstOrDefault(),
                     Priority = t.Priority
                 }).ToList()
             };
@@ -76,7 +76,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
             // remove targets
             foreach (var item in current.Targets.ToList())
             {
-                if (!target.Targets.Any(t=>t.Name == item.Target.Name))
+                if (!target.Targets.Any(t=>t.Id == item.Target.Id))
                 {
                     current.Targets.Remove(item);
                 }
@@ -88,13 +88,13 @@ namespace Coflnet.Sky.EventBroker.Controllers
 
         private void AddOrUpdateTarget(string userId, Subscription current, PublicSubscription.TargetLink item)
         {
-            var currentTarget = current.Targets.FirstOrDefault(t => t.Target.Name == item.Name);
+            var currentTarget = current.Targets.FirstOrDefault(t => t.Target.Id == item.Id);
             if (currentTarget == null)
             {
                 // add new target
                 current.Targets.Add(new TargetConnection()
                 {
-                    Target = context.NotificationTargets.Where(t => t.UserId == userId && t.Name == item.Name).FirstOrDefault(),
+                    Target = context.NotificationTargets.Where(t => t.UserId == userId && t.Id == item.Id).FirstOrDefault(),
                     Priority = item.Priority,
                     IsDisabled = item.IsDisabled
                 });
