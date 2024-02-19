@@ -38,6 +38,7 @@ namespace Coflnet.Sky.EventBroker.Controllers
                 SourceType = target.SourceType.ToString(),
                 UserId = userId,
                 Id = target.Id,
+                SourceSubIdRegex = target.SourceSubIdRegex,
                 Targets = target.Targets.Select(t => new TargetConnection()
                 {
                     Target = context.NotificationTargets.Where(nt=>nt.UserId == userId && nt.Id == t.Id).FirstOrDefault(),
