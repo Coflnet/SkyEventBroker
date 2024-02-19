@@ -43,7 +43,6 @@ public class PublicSubscription
     /// <summary>
     /// The type of event to subscribe to
     /// </summary>
-    [MaxLength(100)]
     public SourceType SourceType { get; set; }
     /// <summary>
     /// Regex to match the <see cref="MessageContainer.SourceSubId"/> against

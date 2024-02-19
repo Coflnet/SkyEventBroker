@@ -22,7 +22,7 @@ public class NotificationTarget
     public TargetType Type { get; set; }
     public NotifyWhen When { get; set; }
     [MaxLength(36)]
-    public string UserId { get; set; }
+    public string? UserId { get; set; }
     /// <summary>
     /// User Given name of this target
     /// </summary>
