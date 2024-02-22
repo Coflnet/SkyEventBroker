@@ -105,9 +105,9 @@ namespace Coflnet.Sky.EventBroker.Controllers
         {
             var current = await context.NotificationTargets.FirstOrDefaultAsync(t => t.Id == target.Id);
             if (current == null)
-                return;
+                throw new CoflnetException("not_found", "Target not found");
             if (current.UserId != userId)
-                throw new CoflnetException("not-authorized", "You are not authorized to access this target");
+                throw new CoflnetException("not_authorized", "You are not authorized to access this target");
 
             await messageService.SendToTarget(new MessageContainer()
             {
