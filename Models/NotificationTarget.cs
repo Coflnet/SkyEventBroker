@@ -46,7 +46,7 @@ public class NotificationTarget
     public enum NotifyWhen
     {
         NEVER,
-        AFTER_FAIL,
+        AfterFail,
         ALWAYS
     }
 }
