@@ -57,11 +57,23 @@ namespace Coflnet.Sky.EventBroker.Services
             Logger.LogInformation("published for {user} source {source} count {count}", message.User.UserId, message.SourceType, receivedCount);
             foreach (var sub in subs)
             {
-                if(!IsAllowed(message, sub))
+                if (!IsAllowed(message, sub))
                     continue;
                 foreach (var target in sub.Targets)
                 {
-                    await SendToTarget(message, target.Target);
+                    if(target.IsDisabled)
+                        continue;
+                    try
+                    {
+                        await SendToTarget(message, target.Target);
+                    }
+                    catch (System.Exception e)
+                    {
+                        Logger.LogError(e, "Error while sending message to {target} from user {userId}", target.Target.Target, message.User.UserId);
+                        target.IsDisabled = true;
+                        db.Update(target);
+                        await db.SaveChangesAsync();
+                    }
                 }
             }
             // message has been received by someone and can be dropped
@@ -138,7 +150,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 var data = notification.data;
                 var payload = new
                 {
-                    to=target.Target, // Recipient device token
+                    to = target.Target, // Recipient device token
                     notification,
                     data
                 };
