@@ -138,13 +138,14 @@ namespace Coflnet.Sky.EventBroker.Services
                 var data = notification.data;
                 var payload = new
                 {
-                    target.Target, // Recipient device token
+                    to=target.Target, // Recipient device token
                     notification,
                     data
                 };
 
                 // Using Newtonsoft.Json
                 var jsonBody = JsonConvert.SerializeObject(payload);
+                Logger.LogInformation("sending to firebase {jsonBody}", jsonBody);
                 var client = new RestClient("https://fcm.googleapis.com");
                 var request = new RestRequest("fcm/send", Method.Post);
 
