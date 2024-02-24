@@ -66,11 +66,24 @@ namespace Coflnet.Sky.EventBroker.Controllers
         /// <returns></returns>
         [HttpDelete]
         [Route("{userId}")]
-        public async Task DeleteNotification(string userId, [FromBody] NotificationTarget target)
+        public async Task DeleteTarget(string userId, [FromBody] NotificationTarget target)
         {
-            target.UserId = userId;
-            context.NotificationTargets.Remove(target);
-            await context.SaveChangesAsync();
+            try
+            {
+                var toDeleteTarget = await context.NotificationTargets.FirstOrDefaultAsync(t => t.Id == target.Id && t.UserId == userId);
+                if (toDeleteTarget == null)
+                    throw new CoflnetException("not_found", "Target not found");
+                context.NotificationTargets.Remove(toDeleteTarget);
+                await context.SaveChangesAsync();
+            }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateException e)
+            {
+                if (e.Message.Contains("foreign key constraint"))
+                {
+                    throw new CoflnetException("subscription_depends", "There is at least one subscription depending on this target therefor it can't be deleted");
+                }
+                throw;
+            }
         }
         /// <summary>
         /// Updates a notification target for an user
