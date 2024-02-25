@@ -54,7 +54,7 @@ namespace Coflnet.Sky.EventBroker.Services
             var receivedCount = 1L;
             if (!IsInGameDeactivated(subs))
                 receivedCount = await pubsub.PublishAsync(RedisChannel.Literal("uev" + message.User.UserId), serialized);
-            Logger.LogInformation("published for {user} source {source} count {count}", message.User.UserId, message.SourceType, receivedCount);
+            Logger.LogInformation("published for {user} source {source} count {count}, subscriptions {subcount}", message.User.UserId, message.SourceType, receivedCount, subs.Count);
             foreach (var sub in subs)
             {
                 if (!IsAllowed(message, sub))
