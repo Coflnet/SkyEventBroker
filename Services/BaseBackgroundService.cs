@@ -147,7 +147,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 SourceSubId = notification.data["subId"],
                 ImageLink = notification.icon,
                 Data = notification.data,
-                SourceType = "subscription",
+                SourceType = SourceType.Subscription.ToString(),
                 Link = notification.click_action,
                 Summary = notification.title,
                 User = new User()
