@@ -196,9 +196,12 @@ namespace Coflnet.Sky.EventBroker.Services
             var client = new System.Net.Http.HttpClient();
             if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
             {
-                message.Link = "https://sky.coflnet.com";
+                Console.WriteLine("Invalid link " + message.Link);
             }
-            var body = JsonConvert.SerializeObject(new { embeds = new[] { new { description = message.Message, url = message.Link, title = message.Summary } } });
+            message.Link ??= "https://sky.coflnet.com";
+            var body = JsonConvert.SerializeObject(new { 
+                avatar_url = message.ImageLink,
+                embeds = new[] { new { description = message.Message, url = message.Link, title = message.Summary } } });
             var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
             Logger.LogInformation("sent to {webhook}\n{body}\n {response} {content}", url, body, response.StatusCode, response.Content.ReadAsStringAsync().Result);
             return response.StatusCode <= System.Net.HttpStatusCode.NoContent;
