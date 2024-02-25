@@ -58,10 +58,13 @@ namespace Coflnet.Sky.EventBroker.Services
             foreach (var sub in subs)
             {
                 if (!IsAllowed(message, sub))
+                {
+                    Logger.LogInformation("not allowed for {user} source {source} sub {sub}", message.User.UserId, message.SourceType, sub.Id);
                     continue;
+                }
                 foreach (var target in sub.Targets)
                 {
-                    if(target.IsDisabled)
+                    if (target.IsDisabled)
                         continue;
                     try
                     {
