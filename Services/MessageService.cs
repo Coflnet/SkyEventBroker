@@ -150,7 +150,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 var senderId = string.Format("id={0}", firebaseSenderId);
 
                 //var icon = "https://sky.coflnet.com/logo192.png";
-                var data = notification.data;
+                var data = notification.data ?? [];
                 var payload = new
                 {
                     to = target.Target, // Recipient device token
