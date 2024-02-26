@@ -206,7 +206,6 @@ namespace Coflnet.Sky.EventBroker.Services
                     url = message.Link,
                     title = message.Summary,
                     footer = new { text = "SkyCofl", icon_url = "https://sky.coflnet.com/logo192.png" },
-                    timestamp = message.Timestamp,
                     thumbnail = new { url = message.ImageLink }
                     } }
             });
