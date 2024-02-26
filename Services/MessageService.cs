@@ -55,7 +55,7 @@ namespace Coflnet.Sky.EventBroker.Services
             if (!IsInGameDeactivated(subs))
                 receivedCount = await pubsub.PublishAsync(RedisChannel.Literal("uev" + message.User.UserId), serialized);
             Logger.LogInformation("published for {user} source {source} count {count}, subscriptions {subcount}", message.User.UserId, message.SourceType, receivedCount, subs.Count);
-            if(message.User.Id < 10)
+            if (message.User.Id < 10)
             {
                 Logger.LogInformation("message {message}", JsonConvert.SerializeObject(message));
             }
@@ -232,8 +232,6 @@ namespace Coflnet.Sky.EventBroker.Services
             var message = $"Your topup of {FormatCoins(lp.Amount)} CoflCoins was received";
             if (lp.Amount < 1800)
                 message = $"You received {FormatCoins(lp.Amount)} CoflCoins";
-            if (lp.ProductSlug == "transfer")
-                message = $"You received {FormatCoins(lp.Amount)} CoflCoins from someone";
             if (lp.ProductSlug == "compensation")
                 if (lp.Amount < 0)
                     message = $"{FormatCoins(lp.Amount)} CoflCoins were deducted from your account for {lp.Reference}";
@@ -250,12 +248,20 @@ namespace Coflnet.Sky.EventBroker.Services
                 var timeInDays = TimeSpan.FromSeconds(product.OwnershipSeconds).TotalDays;
                 message = $"You received {timeInDays} days of test premium for verifying your minecraft account";
             }
+            else if (lp.ProductSlug == "transfer")
+            {
+                if (lp.Amount > 0)
+                    message = $"You received {FormatCoins(lp.Amount)} CoflCoins from someone";
+                else
+                    message = $"You sent {FormatCoins(lp.Amount)} CoflCoins";
+            }
             else if (lp.Amount < 0)
             {
                 var product = await productsApi.ProductsPProductSlugGetAsync(lp.ProductSlug);
                 message = $"You purchased {product?.Title ?? lp.ProductSlug}";
-                sourceType = "purchase";
             }
+            if (lp.Amount < 0)
+                sourceType = "purchase";
 
             if (lp.Timestamp > DateTime.UtcNow - TimeSpan.FromHours(1))
                 await AddMessage(new MessageContainer()
