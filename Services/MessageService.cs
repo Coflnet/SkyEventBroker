@@ -55,6 +55,10 @@ namespace Coflnet.Sky.EventBroker.Services
             if (!IsInGameDeactivated(subs))
                 receivedCount = await pubsub.PublishAsync(RedisChannel.Literal("uev" + message.User.UserId), serialized);
             Logger.LogInformation("published for {user} source {source} count {count}, subscriptions {subcount}", message.User.UserId, message.SourceType, receivedCount, subs.Count);
+            if(message.User.Id < 10)
+            {
+                Logger.LogInformation("message {message}", JsonConvert.SerializeObject(message));
+            }
             foreach (var sub in subs)
             {
                 if (!IsAllowed(message, sub))
@@ -103,7 +107,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 return true;
             // only .* is allowed as wildcard, to avoid getting DOSed with regex
             var converted = "^" + Regex.Escape(sub.SourceSubIdRegex).Replace(".\\*", ".*") + "$";
-            return Regex.IsMatch(message.SourceType, converted, RegexOptions.NonBacktracking);
+            return Regex.IsMatch(message.SourceSubId, converted, RegexOptions.NonBacktracking);
         }
 
         private static bool IsInGameDeactivated(List<Subscription> subs)
