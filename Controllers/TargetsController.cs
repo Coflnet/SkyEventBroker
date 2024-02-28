@@ -76,9 +76,9 @@ namespace Coflnet.Sky.EventBroker.Controllers
                 context.NotificationTargets.Remove(toDeleteTarget);
                 await context.SaveChangesAsync();
             }
-            catch (Microsoft.EntityFrameworkCore.DbUpdateException e)
+            catch (DbUpdateException e)
             {
-                if (e.Message.Contains("foreign key constraint"))
+                if (e.ToString().Contains("foreign key constraint"))
                 {
                     throw new CoflnetException("subscription_depends", "There is at least one subscription depending on this target therefor it can't be deleted");
                 }
