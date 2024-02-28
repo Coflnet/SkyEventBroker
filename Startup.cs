@@ -78,6 +78,10 @@ namespace Coflnet.Sky.EventBroker
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
         {
+            app.UseExceptionHandler(errorApp =>
+            {
+                ErrorHandler.Add(errorApp, "event-broker");
+            });
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
