@@ -27,6 +27,11 @@ public class Subscription
     [MaxLength(100)]
     public string SourceSubIdRegex { get; set; }
     /// <summary>
+    /// Exact matching id in source type system
+    /// </summary>
+    [MaxLength(100)]
+    public string SourceSubId { get; set; }
+    /// <summary>
     /// The targets to send the notification to
     /// </summary>
     public List<TargetConnection> Targets { get; set; }

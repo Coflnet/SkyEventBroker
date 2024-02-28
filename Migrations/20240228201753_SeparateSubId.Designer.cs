@@ -3,6 +3,7 @@ using System;
 using Coflnet.Sky.EventBroker.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace SkyBase.Migrations
 {
     [DbContext(typeof(EventDbContext))]
-    partial class EventDbContextModelSnapshot : ModelSnapshot
+    [Migration("20240228201753_SeparateSubId")]
+    partial class SeparateSubId
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

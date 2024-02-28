@@ -15,6 +15,7 @@ using System;
 using System.Runtime.Serialization;
 using User = Coflnet.Sky.EventBroker.Models.User;
 using Newtonsoft.Json;
+using Coflnet.Sky.Commands.Shared;
 
 namespace Coflnet.Sky.EventBroker.Services
 {
@@ -141,10 +142,17 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             using var scope = scopeFactory.CreateScope();
             var service = GetService(scope);
+            string extraSubId = "";
+            if (notification.data.TryGetValue("whitelist", out var whitelistData))
+            {
+                var whitelist = JsonConvert.DeserializeObject<ListEntry>(whitelistData);
+                if (whitelist.Tags != null && whitelist.Tags.Count > 0)
+                    extraSubId = ";" + string.Join(',', whitelist.Tags);
+            }
             await service.AddMessage(new MessageContainer()
             {
                 Message = notification.body,
-                SourceSubId = notification.data["subId"],
+                SourceSubId = notification.data["subId"] + extraSubId,
                 ImageLink = notification.icon,
                 Data = notification.data,
                 SourceType = SourceType.Subscription.ToString(),
