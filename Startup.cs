@@ -70,6 +70,7 @@ namespace Coflnet.Sky.EventBroker
             services.AddJaeger(Configuration);
             services.AddScoped<MessageService>();
             services.AddSingleton<AsyncUserLockService>();
+            services.AddSingleton<DoubleNotificationPreventer>();
             services.AddCoflService();
             services.AddResponseCaching();
             services.AddResponseCompression();

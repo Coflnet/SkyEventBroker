@@ -22,5 +22,5 @@ namespace Coflnet.Sky.EventBroker.Services
                 userLock.Release();
             }
         }
-    }
+    }        
 }
