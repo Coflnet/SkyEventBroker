@@ -103,7 +103,7 @@ namespace Coflnet.Sky.EventBroker.Services
 
         private static bool IsAllowed(MessageContainer message, Subscription sub)
         {
-            if (sub.SourceSubIdRegex == null)
+            if (sub.SourceSubIdRegex == null || sub.SourceSubIdRegex == "All" || sub.SourceSubIdRegex == "*")
                 return true;
             // only .* is allowed as wildcard, to avoid getting DOSed with regex
             var converted = "^" + Regex.Escape(sub.SourceSubIdRegex).Replace(".\\*", ".*") + "$";
