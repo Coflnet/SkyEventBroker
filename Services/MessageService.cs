@@ -210,7 +210,8 @@ namespace Coflnet.Sky.EventBroker.Services
                     url = message.Link,
                     title = message.Summary,
                     footer = new { text = "SkyCofl", icon_url = "https://sky.coflnet.com/logo192.png" },
-                    thumbnail = new { url = message.ImageLink }
+                    thumbnail = new { url = message.ImageLink },
+                    avatar_url = "https://sky.coflnet.com/logo192.png",
                     } }
             });
             var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
