@@ -1,9 +1,9 @@
-VERSION=0.5.3
+VERSION=0.5.4
 
 docker run --rm -v "${PWD}:/local" --network host -u $(id -u ${USER}):$(id -g ${USER})  openapitools/openapi-generator-cli generate \
 -i http://localhost:5024/swagger/v1/swagger.json \
 -g csharp \
--o /local/out --additional-properties=packageName=Coflnet.Sky.EventBroker.Client,packageVersion=$VERSION,licenseId=MIT
+-o /local/out --additional-properties=packageName=Coflnet.Sky.EventBroker.Client,packageVersion=$VERSION,licenseId=MIT,targetFramework=net6.0
 
 cd out
 path=src/Coflnet.Sky.EventBroker.Client/Coflnet.Sky.EventBroker.Client.csproj
