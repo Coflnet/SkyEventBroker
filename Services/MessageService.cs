@@ -343,7 +343,8 @@ namespace Coflnet.Sky.EventBroker.Services
 
             if (verifiedCount != 0)
             {
-                await VerifiedAlready(userId, minecraftUuid);
+                if (verifiedCount > 0) // don't send anything for autoconnected accounts
+                    await VerifiedAlready(userId, minecraftUuid);
                 return;
             }
 
