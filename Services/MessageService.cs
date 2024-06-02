@@ -353,7 +353,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 var current = await settingsService.GetCurrentValue<AccountInfo>(u, "accountInfo", () => null);
                 if (current == null)
                 {
-                    Logger.LogInformation($"No account info found for {userId}");
+                    Logger.LogInformation("No account info found for {userId}", userId);
                     return;
                 }
                 current.McIds.Add(minecraftUuid);
