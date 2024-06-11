@@ -19,6 +19,7 @@ using System.Text.Json.Serialization;
 
 namespace Coflnet.Sky.EventBroker
 {
+    #pragma warning disable CS1591
     public class Startup
     {
         public Startup(IConfiguration configuration)
