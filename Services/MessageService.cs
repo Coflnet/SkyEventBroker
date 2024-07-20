@@ -47,7 +47,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 message.Timestamp = DateTime.Now;
             }
             if (string.IsNullOrEmpty(message.Reference))
-                message.Reference = Guid.NewGuid().ToString().Replace("-", "");
+                message.Reference = message.Message.GetHashCode().ToString();
             var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*" || s.SourceType == "Any") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
             var pubsub = connection.GetSubscriber();
             var serialized = JsonConvert.SerializeObject(message);
