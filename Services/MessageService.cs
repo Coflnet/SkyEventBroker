@@ -26,9 +26,10 @@ namespace Coflnet.Sky.EventBroker.Services
         private SettingsService settingsService;
         private IConfiguration config;
         private PremiumService premiumService;
+        private DoubleNotificationPreventer doubleNotificationPreventer;
 
         public MessageService(EventDbContext db, ConnectionMultiplexer connection, Payments.Client.Api.ProductsApi productsApi,
-                        ILogger<MessageService> logger, AsyncUserLockService lockService, SettingsService settingsService, IConfiguration config, PremiumService premiumService)
+                        ILogger<MessageService> logger, AsyncUserLockService lockService, SettingsService settingsService, IConfiguration config, PremiumService premiumService, DoubleNotificationPreventer doubleNotificationPreventer)
         {
             this.db = db;
             this.connection = connection;
@@ -38,6 +39,7 @@ namespace Coflnet.Sky.EventBroker.Services
             this.settingsService = settingsService;
             this.config = config;
             this.premiumService = premiumService;
+            this.doubleNotificationPreventer = doubleNotificationPreventer;
         }
 
         public async Task<MessageContainer> AddMessage(MessageContainer message)
@@ -48,6 +50,11 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             if (string.IsNullOrEmpty(message.Reference))
                 message.Reference = message.Message.GetHashCode().ToString();
+            if (!doubleNotificationPreventer.HasNeverBeenSeen(message.User.UserId, message.Reference))
+            {
+                Logger.LogInformation("Message {message} already sent for {userId} (reference {reference})", message.Message, message.User.UserId, message.Reference);
+                return message;
+            }
             var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*" || s.SourceType == "Any") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
             var pubsub = connection.GetSubscriber();
             var serialized = JsonConvert.SerializeObject(message);
@@ -197,7 +204,7 @@ namespace Coflnet.Sky.EventBroker.Services
         private async Task<bool> SendWebhook(MessageContainer message, NotificationTarget target)
         {
             var url = target.Target;
-            if(!url.Contains("wait="))
+            if (!url.Contains("wait="))
                 url += "?wait=true";
             var client = new System.Net.Http.HttpClient();
             if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
