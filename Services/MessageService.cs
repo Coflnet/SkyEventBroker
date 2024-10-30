@@ -212,10 +212,11 @@ namespace Coflnet.Sky.EventBroker.Services
                 Console.WriteLine("Invalid link " + message.Link);
             }
             message.Link ??= "https://sky.coflnet.com";
+            var replacedMinecraftFormat = Regex.Replace(message.Message, "§[0-9a-fklmnor]", "");
             var body = JsonConvert.SerializeObject(new
             {
                 embeds = new[] { new {
-                    description = message.Message,
+                    description = replacedMinecraftFormat,
                     url = message.Link,
                     title = message.Summary,
                     footer = new { text = "SkyCofl", icon_url = "https://sky.coflnet.com/logo192.png" },

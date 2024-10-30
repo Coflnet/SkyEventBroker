@@ -158,6 +158,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 SourceType = SourceType.Subscription.ToString(),
                 Link = notification.click_action,
                 Summary = notification.title,
+                Reference = (notification.title + notification.click_action.Split("/").Last()).Truncate(32),
                 User = new User()
                 {
                     UserId = userId
