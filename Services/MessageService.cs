@@ -185,6 +185,13 @@ namespace Coflnet.Sky.EventBroker.Services
                 {
                     Console.WriteLine(JsonConvert.SerializeObject(response.Content));
                 }
+                target.UseCount++;
+                if(response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    target.When = NotificationTarget.NotifyWhen.NEVER;
+                }
+                db.Update(target);
+                await db.SaveChangesAsync();
 
                 dynamic res = JsonConvert.DeserializeObject(response.Content);
                 var success = res.success == 1;
