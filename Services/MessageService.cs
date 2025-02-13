@@ -79,7 +79,12 @@ namespace Coflnet.Sky.EventBroker.Services
                         continue;
                     try
                     {
-                        await SendToTarget(message, target.Target);
+                        if (!await SendToTarget(message, target.Target))
+                        {
+                            target.IsDisabled = true;
+                            db.Update(target);
+                            await db.SaveChangesAsync();
+                        }
                     }
                     catch (System.Exception e)
                     {
@@ -186,7 +191,7 @@ namespace Coflnet.Sky.EventBroker.Services
                     Console.WriteLine(JsonConvert.SerializeObject(response.Content));
                 }
                 target.UseCount++;
-                if(response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 {
                     target.When = NotificationTarget.NotifyWhen.NEVER;
                 }
