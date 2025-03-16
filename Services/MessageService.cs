@@ -56,11 +56,12 @@ namespace Coflnet.Sky.EventBroker.Services
                 return message;
             }
             var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*" || s.SourceType == "Any") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
-            var pubsub = connection.GetSubscriber();
-            var serialized = JsonConvert.SerializeObject(message);
+
             var receivedCount = 1L;
             if (!IsInGameDeactivated(subs))
-                receivedCount = await pubsub.PublishAsync(RedisChannel.Literal("uev" + message.User.UserId), serialized);
+            {
+                receivedCount = await SendInGame(message);
+            }
             Logger.LogInformation("published for {user} source {source} count {count}, subscriptions {subcount}", message.User.UserId, message.SourceType, receivedCount, subs.Count);
             if (message.User.Id < 10)
             {
@@ -113,6 +114,13 @@ namespace Coflnet.Sky.EventBroker.Services
             return message;
         }
 
+        private async Task<long> SendInGame(MessageContainer message)
+        {
+            var pubsub = connection.GetSubscriber();
+            var serialized = JsonConvert.SerializeObject(message);
+            return await pubsub.PublishAsync(RedisChannel.Literal("uev" + message.User.UserId), serialized);
+        }
+
         private static bool IsAllowed(MessageContainer message, Subscription sub)
         {
             if (sub.SourceSubIdRegex == null || sub.SourceSubIdRegex == "All" || sub.SourceSubIdRegex == "*")
@@ -143,8 +151,13 @@ namespace Coflnet.Sky.EventBroker.Services
             {
                 return await SendFirebase(message, target);
             }
+            if (target.Type == NotificationTarget.TargetType.InGame)
+            {
+                return await SendInGame(message) > 0;
+            }
             return false;
         }
+
 
         /// <summary>
         /// Attempts to send a notification
