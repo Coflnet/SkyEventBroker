@@ -323,15 +323,14 @@ namespace Coflnet.Sky.EventBroker.Services
                     Logger.LogInformation($"No account info found for {u}");
                     return;
                 }
-                if (config["PRODUCTS:PREMIUM"] == lp.ProductSlug || config["PRODUCTS:TEST_PREMIUM"] == lp.ProductSlug)
+                if (lp.ProductSlug.Contains("premium"))
                 {
-                    Logger.LogInformation("changing premium time for {user}", lp.UserId);
-
-                    var when = await premiumService.ExpiresWhen(lp.UserId);
-                    if (when > DateTime.Now)
+                    var tierExpiry = await premiumService.GetCurrentTier(lp.UserId);
+                    if (tierExpiry.Item2 > DateTime.Now)
                     {
-                        current.ExpiresAt = when;
-                        current.Tier = AccountTier.PREMIUM;
+                        current.ExpiresAt = tierExpiry.Item2;
+                        current.Tier = Enum.Parse<AccountTier>(tierExpiry.Item1.ToString());
+                        Logger.LogInformation("new premium time {time} for {user} ({tier})", tierExpiry.Item2, lp.UserId, tierExpiry.Item1);
                         await settingsService.UpdateSetting(u, "accountInfo", current);
                     }
                 }
