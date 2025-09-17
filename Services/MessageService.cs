@@ -86,8 +86,10 @@ namespace Coflnet.Sky.EventBroker.Services
                             db.Update(target);
                             await db.SaveChangesAsync();
                         }
+                        else
+                            Logger.LogInformation("sent message to {target} from user {userId}", target.Target.Target, message.User.UserId);
                     }
-                    catch (System.Exception e)
+                    catch (Exception e)
                     {
                         Logger.LogError(e, "Error while sending message to {target} from user {userId}", target.Target.Target, message.User.UserId);
                         target.IsDisabled = true;
@@ -153,6 +155,7 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             if (target.Type == NotificationTarget.TargetType.InGame)
             {
+                Logger.LogInformation("Sending in-game message to {userId}", message.User.UserId);
                 return await SendInGame(message) > 0;
             }
             return false;
