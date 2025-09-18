@@ -235,6 +235,8 @@ namespace Coflnet.Sky.EventBroker.Services
             var url = target.Target;
             if (!url.Contains("wait="))
                 url += "?wait=true";
+            if (url == "https://discord.gg/api")
+                return false;
             var client = new System.Net.Http.HttpClient();
             if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
             {
