@@ -156,7 +156,8 @@ namespace Coflnet.Sky.EventBroker.Services
             if (target.Type == NotificationTarget.TargetType.InGame)
             {
                 Logger.LogInformation("Sending in-game message to {userId}", message.User.UserId);
-                return await SendInGame(message) > 0;
+                await SendInGame(message);
+                return true; // make it allways "successful" so that the target is not disabled
             }
             return false;
         }
