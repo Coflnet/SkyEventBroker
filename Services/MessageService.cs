@@ -77,7 +77,10 @@ namespace Coflnet.Sky.EventBroker.Services
                 foreach (var target in sub.Targets)
                 {
                     if (target.IsDisabled)
+                    {
+                        Logger.LogInformation("target {target} is disabled, skipping", target.Target.Target);
                         continue;
+                    }
                     try
                     {
                         if (!await SendToTarget(message, target.Target))
@@ -85,6 +88,7 @@ namespace Coflnet.Sky.EventBroker.Services
                             target.IsDisabled = true;
                             db.Update(target);
                             await db.SaveChangesAsync();
+                            Logger.LogInformation("disabled target {target} for user {userId} as sending failed", target.Target.Target, message.User.UserId);
                         }
                         else
                             Logger.LogInformation("sent message to {target} from user {userId}", target.Target.Target, message.User.UserId);
