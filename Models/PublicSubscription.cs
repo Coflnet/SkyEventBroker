@@ -94,5 +94,9 @@ public enum SourceType
     /// <summary>
     /// Minecraft account was verified
     /// </summary>
-    McVerify
+    McVerify,
+    /// <summary>
+    /// Lowball trade offer notifications
+    /// </summary>
+    Lowball
 }

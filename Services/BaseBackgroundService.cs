@@ -12,6 +12,7 @@ using Coflnet.Sky.EventBroker.Controllers;
 using Coflnet.Sky.Core;
 using Coflnet.Payments.Client.Model;
 using System;
+using System.Collections.Generic;
 using System.Runtime.Serialization;
 using User = Coflnet.Sky.EventBroker.Models.User;
 using Newtonsoft.Json;
@@ -97,6 +98,26 @@ namespace Coflnet.Sky.EventBroker.Services
                 }
             }, stoppingToken, "sky-eventbroker", 3, AutoOffsetReset.Latest, new NotificationDeserializer());
 
+            var lowballTopic = config["TOPICS:LOWBALL_OFFERS"];
+            Task lowball = Task.CompletedTask;
+            if (!string.IsNullOrEmpty(lowballTopic))
+            {
+                lowball = Kafka.KafkaConsumer.ConsumeBatch<LowballOfferMessage>(config, lowballTopic, async batch =>
+                {
+                    try
+                    {
+                        foreach (var offer in batch)
+                        {
+                            await ProcessLowballOffer(offer);
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        logger.LogError(e, "Error while processing lowball offer");
+                    }
+                }, stoppingToken, "sky-eventbroker-lowball", 5, AutoOffsetReset.Latest);
+            }
+
             var cleanUp = Task.Run(async () =>
             {
                 logger.LogInformation("Starting cleanup task");
@@ -125,7 +146,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 Console.WriteLine("quiting");
             });
 
-            await Task.WhenAny(flipCons, verfify, cleanUp, notification);
+            await Task.WhenAny(flipCons, verfify, cleanUp, notification, lowball);
             logger.LogError("One task exited");
             await notification;
             logger.LogError("Notification task exited");
@@ -165,6 +186,45 @@ namespace Coflnet.Sky.EventBroker.Services
                 }
             });
             logger.LogInformation("Notification event received for {user}", userId);
+        }
+
+        private async Task ProcessLowballOffer(LowballOfferMessage offer)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var service = GetService(scope);
+            var db = scope.ServiceProvider.GetRequiredService<EventDbContext>();
+            var sourceType = SourceType.Lowball.ToString();
+
+            var subs = await db.Subscriptions
+                .Where(s => s.SourceType == sourceType || s.SourceType == "*" || s.SourceType == "Any")
+                .Include(s => s.Targets).ThenInclude(t => t.Target)
+                .ToListAsync();
+
+            var itemLink = $"https://sky.coflnet.com/item/{offer.ItemTag}";
+            var cleanName = offer.ItemName?.Replace("§", "").TrimStart() ?? offer.ItemTag;
+            var priceText = offer.AskingPrice.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+
+            var notifiedUsers = new HashSet<string>();
+            foreach (var sub in subs)
+            {
+                if (notifiedUsers.Contains(sub.UserId))
+                    continue;
+                notifiedUsers.Add(sub.UserId);
+
+                await service.AddMessage(new MessageContainer()
+                {
+                    Message = $"New lowball offer: {cleanName} for {priceText} coins",
+                    Summary = $"Lowball: {cleanName}",
+                    SourceType = sourceType,
+                    SourceSubId = offer.ItemTag,
+                    Link = itemLink,
+                    ImageLink = $"https://sky.coflnet.com/static/icon/{offer.ItemTag}",
+                    Reference = ("lb" + offer.OfferId.ToString()[..8]).Truncate(32),
+                    User = new User() { UserId = sub.UserId }
+                });
+            }
+
+            logger.LogInformation("Lowball offer {OfferId} for {ItemTag} notified {Count} users", offer.OfferId, offer.ItemTag, notifiedUsers.Count);
         }
 
         [DataContract]
@@ -209,5 +269,28 @@ namespace Coflnet.Sky.EventBroker.Services
         {
             return scope.ServiceProvider.GetRequiredService<MessageService>();
         }
+    }
+
+    [DataContract]
+    public class LowballOfferMessage
+    {
+        [DataMember(Name = "offerId")]
+        public Guid OfferId { get; set; }
+        [DataMember(Name = "userId")]
+        public string UserId { get; set; }
+        [DataMember(Name = "itemTag")]
+        public string ItemTag { get; set; }
+        [DataMember(Name = "itemName")]
+        public string ItemName { get; set; }
+        [DataMember(Name = "askingPrice")]
+        public long AskingPrice { get; set; }
+        [DataMember(Name = "minecraftAccount")]
+        public Guid MinecraftAccount { get; set; }
+        [DataMember(Name = "createdAt")]
+        public DateTimeOffset CreatedAt { get; set; }
+        [DataMember(Name = "apiAuctionJson")]
+        public string ApiAuctionJson { get; set; }
+        [DataMember(Name = "itemCount")]
+        public int ItemCount { get; set; }
     }
 }
