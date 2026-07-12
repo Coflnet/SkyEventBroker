@@ -58,7 +58,7 @@ namespace Coflnet.Sky.EventBroker.Services
             var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*" || s.SourceType == "Any") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
 
             var receivedCount = 1L;
-            if (!IsInGameDeactivated(subs))
+            if (!IsInGameDeactivated(subs, message))
             {
                 receivedCount = await SendInGame(message);
             }
@@ -79,6 +79,12 @@ namespace Coflnet.Sky.EventBroker.Services
                     if (target.IsDisabled)
                     {
                         Logger.LogInformation("target {target} is disabled, skipping", target.Target.Target);
+                        continue;
+                    }
+                    if (target.Target.When == NotificationTarget.NotifyWhen.NEVER)
+                    {
+                        // "never notify" targets (e.g. the in-game disable marker) only signal intent, they are never sent to
+                        Logger.LogInformation("target {target} is set to never notify, skipping", target.Target.Target);
                         continue;
                     }
                     try
@@ -136,9 +142,16 @@ namespace Coflnet.Sky.EventBroker.Services
             return Regex.IsMatch(message.SourceSubId, converted, RegexOptions.NonBacktracking);
         }
 
-        private static bool IsInGameDeactivated(List<Subscription> subs)
+        private static bool IsInGameDeactivated(List<Subscription> subs, MessageContainer message)
         {
-            return subs.Any(s => s.Targets.Any(t => t.Target.Type == NotificationTarget.TargetType.InGame && t.Target.When.HasFlag(NotificationTarget.NotifyWhen.NEVER)));
+            // Only subscriptions that actually match this message may suppress the default in-game send,
+            // so disabling in-game on one notifier does not silence others (or messages from other sources).
+            // Any explicit in-game target on a matching subscription takes over the default delivery:
+            // InGame/ALWAYS is then sent by the target loop, InGame/NEVER (the disable marker) suppresses it.
+            // Note: this reads the target, not the connection's IsDisabled flag, so the marker still works
+            // even though the frontend attaches it with a disabled connection.
+            return subs.Where(s => IsAllowed(message, s))
+                .Any(s => s.Targets.Any(t => t.Target.Type == NotificationTarget.TargetType.InGame));
         }
 
         /// <summary>
