@@ -72,6 +72,8 @@ namespace Coflnet.Sky.EventBroker
             services.AddScoped<MessageService>();
             services.AddSingleton<AsyncUserLockService>();
             services.AddSingleton<DoubleNotificationPreventer>();
+            services.AddSingleton<FirebasePushService>();
+            services.AddHostedService<FirebaseTargetReactivationService>();
             services.AddCoflService();
             services.AddResponseCaching();
             services.AddResponseCompression();

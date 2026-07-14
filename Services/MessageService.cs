@@ -27,10 +27,13 @@ namespace Coflnet.Sky.EventBroker.Services
         private IConfiguration config;
         private PremiumService premiumService;
         private DoubleNotificationPreventer doubleNotificationPreventer;
+        private FirebasePushService pushService;
 
         public MessageService(EventDbContext db, ConnectionMultiplexer connection, Payments.Client.Api.ProductsApi productsApi,
-                        ILogger<MessageService> logger, AsyncUserLockService lockService, SettingsService settingsService, IConfiguration config, PremiumService premiumService, DoubleNotificationPreventer doubleNotificationPreventer)
+                        ILogger<MessageService> logger, AsyncUserLockService lockService, SettingsService settingsService, IConfiguration config, PremiumService premiumService,
+                        DoubleNotificationPreventer doubleNotificationPreventer, FirebasePushService pushService)
         {
+            this.pushService = pushService;
             this.db = db;
             this.connection = connection;
             this.productsApi = productsApi;
@@ -89,22 +92,23 @@ namespace Coflnet.Sky.EventBroker.Services
                     }
                     try
                     {
-                        if (!await SendToTarget(message, target.Target))
+                        var result = await SendToTarget(message, target.Target);
+                        if (result == PushResult.InvalidToken)
                         {
                             target.IsDisabled = true;
                             db.Update(target);
                             await db.SaveChangesAsync();
-                            Logger.LogInformation("disabled target {target} for user {userId} as sending failed", target.Target.Target, message.User.UserId);
+                            Logger.LogInformation("disabled target {target} for user {userId} as it was rejected", target.Target.Target, message.User.UserId);
                         }
-                        else
+                        else if (result == PushResult.Sent)
                             Logger.LogInformation("sent message to {target} from user {userId}", target.Target.Target, message.User.UserId);
+                        else
+                            // temporary failures and missing config must not disable the target, it would need manual reactivation
+                            Logger.LogWarning("could not send message to {target} from user {userId} ({result})", target.Target.Target, message.User.UserId, result);
                     }
                     catch (Exception e)
                     {
                         Logger.LogError(e, "Error while sending message to {target} from user {userId}", target.Target.Target, message.User.UserId);
-                        target.IsDisabled = true;
-                        db.Update(target);
-                        await db.SaveChangesAsync();
                     }
                 }
             }
@@ -159,12 +163,12 @@ namespace Coflnet.Sky.EventBroker.Services
         /// </summary>
         /// <param name="message"></param>
         /// <param name="target"></param>
-        /// <returns>If the message was sent successfully</returns>
-        public async Task<bool> SendToTarget(MessageContainer message, NotificationTarget target)
+        /// <returns>How the delivery attempt went</returns>
+        public async Task<PushResult> SendToTarget(MessageContainer message, NotificationTarget target)
         {
             if (target.Type == NotificationTarget.TargetType.DiscordWebhook)
             {
-                return await SendWebhook(message, target);
+                return await SendWebhook(message, target) ? PushResult.Sent : PushResult.InvalidToken;
             }
             if (target.Type == NotificationTarget.TargetType.FIREBASE)
             {
@@ -174,77 +178,29 @@ namespace Coflnet.Sky.EventBroker.Services
             {
                 Logger.LogInformation("Sending in-game message to {userId}", message.User.UserId);
                 await SendInGame(message);
-                return true; // make it allways "successful" so that the target is not disabled
+                return PushResult.Sent; // make it allways "successful" so that the target is not disabled
             }
-            return false;
+            return PushResult.TemporaryFailure;
         }
 
 
         /// <summary>
-        /// Attempts to send a notification
+        /// Attempts to send a push notification via firebase cloud messaging
         /// </summary>
         /// <param name="message"></param>
         /// <param name="target"></param>
-        /// <returns><c>true</c> when the notification was sent successfully</returns>
-        public async Task<bool> SendFirebase(MessageContainer message, NotificationTarget target)
+        /// <returns>the outcome of the delivery attempt</returns>
+        public async Task<PushResult> SendFirebase(MessageContainer message, NotificationTarget target)
         {
-            string firebaseKey = config["FIREBASE_KEY"];
-            string firebaseSenderId = config["FIREBASE_SENDER_ID"];
-            try
-            {
-                var notification = new FirebaseNotification(message.Summary, message.Message, message.Link, message.ImageLink, null, message.Data as Dictionary<string, string>);
-                // Get the server key from FCM console
-                var serverKey = string.Format("key={0}", firebaseKey);
-
-                // Get the sender id from FCM console
-                var senderId = string.Format("id={0}", firebaseSenderId);
-
-                //var icon = "https://sky.coflnet.com/logo192.png";
-                var data = notification.data ?? [];
-                var payload = new
-                {
-                    to = target.Target, // Recipient device token
-                    notification,
-                    data
-                };
-
-                // Using Newtonsoft.Json
-                var jsonBody = JsonConvert.SerializeObject(payload);
-                Logger.LogInformation("sending to firebase {jsonBody}", jsonBody);
-                var client = new RestClient("https://fcm.googleapis.com");
-                var request = new RestRequest("fcm/send", Method.Post);
-
-                request.AddHeader("Authorization", serverKey);
-                request.AddHeader("Sender", senderId); request.AddHeader("Content-Type", "application/json");
-                request.AddParameter("application/json", jsonBody, ParameterType.RequestBody);
-                var response = await client.ExecuteAsync(request);
-
-
-                if (response.StatusCode != System.Net.HttpStatusCode.OK)
-                {
-                    Console.WriteLine(JsonConvert.SerializeObject(response.Content));
-                }
-                target.UseCount++;
-                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
-                {
-                    target.When = NotificationTarget.NotifyWhen.NEVER;
-                }
-                db.Update(target);
-                await db.SaveChangesAsync();
-
-                dynamic res = JsonConvert.DeserializeObject(response.Content);
-                var success = res.success == 1;
-                if (!success)
-                    dev.Logger.Instance.Error(response.Content);
-
-                return success;
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Couldn't send notification");
-            }
-
-            return false;
+            var data = message.Data as Dictionary<string, string>;
+            var notification = new FirebaseNotification(message.Summary, message.Message, message.Link, message.ImageLink, null, data);
+            var result = await pushService.SendAsync(target.Target, notification);
+            if (result == PushResult.NotConfigured)
+                return result;
+            target.UseCount++;
+            db.Update(target);
+            await db.SaveChangesAsync();
+            return result;
         }
 
         private async Task<bool> SendWebhook(MessageContainer message, NotificationTarget target)
