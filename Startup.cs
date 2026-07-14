@@ -2,12 +2,14 @@ using System;
 using System.IO;
 using System.Reflection;
 using Coflnet.Payments.Client.Api;
+using Coflnet.Sky.EventBroker.Migrations;
 using Coflnet.Sky.EventBroker.Models;
 using Coflnet.Sky.EventBroker.Services;
 using Coflnet.Sky.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -56,6 +58,7 @@ namespace Coflnet.Sky.EventBroker
             services.AddDbContext<EventDbContext>(
                 dbContextOptions => dbContextOptions
                     .UseNpgsql(Configuration["COCKROACH_DB_CONNECTION"])
+                    .ReplaceService<IHistoryRepository, CockroachHistoryRepository>()
                     .EnableSensitiveDataLogging() // <-- These two calls are optional but help
                     .EnableDetailedErrors()       // <-- with debugging (remove for production).
             );
