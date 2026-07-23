@@ -27,6 +27,7 @@ namespace Coflnet.Sky.EventBroker
         public Startup(IConfiguration configuration)
         {
             Configuration = configuration;
+            HypixelContext.SetConfiguration(configuration);
         }
 
         public IConfiguration Configuration { get; }
