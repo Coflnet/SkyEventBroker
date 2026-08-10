@@ -1,0 +1,121 @@
+using System;
+using System.Text;
+using Coflnet.Sky.EventBroker.Models;
+using NUnit.Framework;
+
+namespace Coflnet.Sky.EventBroker.Services;
+
+public class PurchaseConfirmationEmailServiceTests
+{
+    [Test]
+    public void BuildContent_ContainsTransactionAgreementAndWithdrawalDetails()
+    {
+        var documents = TestDocuments("en");
+        var text = PurchaseConfirmationEmailService.BuildContent(
+            new PaymentEvent
+            {
+                ProductId = "premium",
+                PayedAmount = 12.34,
+                Currency = "EUR",
+                PaymentMethod = "card",
+                PaymentProvider = "stripe",
+                PaymentProviderTransactionId = "ref-123",
+                Timestamp = new DateTime(2026, 8, 9, 10, 30, 0, DateTimeKind.Utc)
+            },
+            "en",
+            documents);
+
+        Assert.That(text, Does.Contain("Purchase confirmation")
+            .And.Contain("Amount: 12.34 EUR")
+            .And.Contain("Payment method: card")
+            .And.Contain(documents.AgreementHash)
+            .And.Contain(documents.AgreementUrl)
+            .And.Contain(documents.Withdrawal.Hash));
+        foreach (var document in documents.AgreementDocuments)
+            Assert.That(text, Does.Contain(document.Url).And.Contain(document.Hash));
+    }
+
+    [Test]
+    public void BuildContent_MerchantOfRecordIsOnlyFulfillmentNotice()
+    {
+        var text = PurchaseConfirmationEmailService.BuildContent(
+            new PaymentEvent
+            {
+                ProductId = "cc_1800",
+                PaymentProvider = "lemonsqueezy",
+                PaymentProviderTransactionId = "order-123",
+                Timestamp = DateTime.UtcNow
+            },
+            "en",
+            TestDocuments("en"));
+
+        Assert.That(text, Does.Contain("Fulfillment confirmation")
+            .And.Contain("merchant of record")
+            .And.Contain("authoritative order, payment and withdrawal information")
+            .And.Contain("separate SkyCofl usage relationship")
+            .And.Not.Contain("contract with Coflnet GmbH"));
+    }
+
+    [Test]
+    public void BuildContent_UsesGermanDocumentsForGermanLocale()
+    {
+        var documents = TestDocuments("de");
+        var text = PurchaseConfirmationEmailService.BuildContent(
+            new PaymentEvent
+            {
+                ProductId = "premium",
+                PaymentProvider = "stripe",
+                PaymentProviderTransactionId = "ref-123",
+                Timestamp = DateTime.UtcNow
+            },
+            "de-DE",
+            documents);
+
+        Assert.That(text, Does.Contain("Kaufbestätigung")
+            .And.Contain("Widerrufsbelehrung")
+            .And.Not.Contain("Purchase confirmation"));
+        foreach (var document in documents.AgreementDocuments)
+            Assert.That(document.FileName, Does.Contain("-de-"));
+    }
+
+    [Test]
+    public void PurchaseConfirmationReference_IsStableAndSeparatesType()
+    {
+        var reference = MessageService.PurchaseConfirmationReference(
+            "provider",
+            "order-123");
+
+        Assert.That(reference, Has.Length.LessThanOrEqualTo(32));
+        Assert.That(reference, Is.EqualTo(
+            MessageService.PurchaseConfirmationReference(" Provider ", " order-123 ")));
+        Assert.That(reference, Is.Not.EqualTo(
+            MessageService.PurchaseConfirmationReference(
+                "provider",
+                "order-123",
+                "trial")));
+    }
+
+    private static LegalDocuments TestDocuments(string language) =>
+        new(
+            "skycofl",
+            new string('a', 64),
+            $"https://coflnet.com/legal/agreements/{new string('a', 64)}.json",
+            Encoding.UTF8.GetBytes("{}"),
+            [
+                Document("terms-of-service", language),
+                Document("commerce-and-programme-terms", language),
+                Document("ai-feature-terms", language),
+                Document("skycofl-service-terms", language)
+            ],
+            Document("withdrawal", language));
+
+    private static LegalDocument Document(string key, string language) =>
+        new(
+            key,
+            key,
+            $"{key}-{language}-2026-08-08.md",
+            "2026-08-08",
+            $"https://coflnet.com/legal/archive/{key}-{language}-2026-08-08.md",
+            Encoding.UTF8.GetBytes(key),
+            $"{key}-{language}-hash");
+}

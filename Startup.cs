@@ -69,13 +69,23 @@ namespace Coflnet.Sky.EventBroker
                 config.GetRequiredService<ILogger<Startup>>().LogInformation($"Connecting to Redis with '{Configuration["REDIS_HOST"]}'");
                 return StackExchange.Redis.ConnectionMultiplexer.Connect(Configuration["REDIS_HOST"]);
             });
+            services.AddHttpClient(nameof(LegalDocumentProvider));
+            services.AddSingleton<LegalDocumentProvider>();
+            services.AddHostedService(service =>
+                service.GetRequiredService<LegalDocumentProvider>());
             services.AddSingleton<ScheduleService>();
             services.AddHostedService(s => s.GetRequiredService<ScheduleService>());
             services.AddHostedService<BaseBackgroundService>();
             services.AddJaeger(Configuration);
             services.AddScoped<MessageService>();
             services.AddSingleton<AsyncUserLockService>();
+            services.AddSingleton<Coflnet.Sky.Indexer.Client.Api.IUserApi>(
+                new Coflnet.Sky.Indexer.Client.Api.UserApi(Configuration["INDEXER_BASE_URL"]));
             services.AddSingleton<DoubleNotificationPreventer>();
+            services.AddSingleton<PurchaseConfirmationEmailService>();
+            services.AddSingleton<IPurchaseConfirmationEmailSender>(
+                services => services.GetRequiredService<PurchaseConfirmationEmailService>());
+            services.AddScoped<PurchaseConfirmationDeliveryService>();
             services.AddSingleton<FirebasePushService>();
             services.AddHostedService<FirebaseTargetReactivationService>();
             services.AddCoflService();

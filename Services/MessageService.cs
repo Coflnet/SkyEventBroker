@@ -28,10 +28,12 @@ namespace Coflnet.Sky.EventBroker.Services
         private PremiumService premiumService;
         private DoubleNotificationPreventer doubleNotificationPreventer;
         private FirebasePushService pushService;
+        private Coflnet.Sky.Indexer.Client.Api.IUserApi userApi;
 
         public MessageService(EventDbContext db, ConnectionMultiplexer connection, Payments.Client.Api.ProductsApi productsApi,
                         ILogger<MessageService> logger, AsyncUserLockService lockService, SettingsService settingsService, IConfiguration config, PremiumService premiumService,
-                        DoubleNotificationPreventer doubleNotificationPreventer, FirebasePushService pushService)
+                        DoubleNotificationPreventer doubleNotificationPreventer, FirebasePushService pushService,
+                        Coflnet.Sky.Indexer.Client.Api.IUserApi userApi)
         {
             this.pushService = pushService;
             this.db = db;
@@ -43,6 +45,7 @@ namespace Coflnet.Sky.EventBroker.Services
             this.config = config;
             this.premiumService = premiumService;
             this.doubleNotificationPreventer = doubleNotificationPreventer;
+            this.userApi = userApi;
         }
 
         public async Task<MessageContainer> AddMessage(MessageContainer message)
@@ -314,6 +317,68 @@ namespace Coflnet.Sky.EventBroker.Services
                     }
                 }
             });
+        }
+
+        internal async Task NewPayment(PaymentEvent payment)
+        {
+            if (payment == null
+                || string.IsNullOrWhiteSpace(payment.PaymentProviderTransactionId)
+                || !int.TryParse(payment.UserId, out _))
+                return;
+
+            var confirmationReference = PurchaseConfirmationReference(
+                payment.PaymentProvider,
+                payment.PaymentProviderTransactionId,
+                payment.ConfirmationType);
+            if (await db.PurchaseConfirmationDeliveries.AnyAsync(
+                    delivery => delivery.Reference == confirmationReference))
+                return;
+            var user = await userApi.UserEmailGetAsync(payment.UserId);
+            if (string.IsNullOrWhiteSpace(user?.Email))
+                throw new InvalidOperationException(
+                    $"No account email found for paid transaction {confirmationReference}");
+            var accountInfo = await settingsService.GetCurrentValue<AccountInfo>(
+                payment.UserId,
+                "accountInfo",
+                () => null);
+            var now = DateTime.UtcNow;
+            db.PurchaseConfirmationDeliveries.Add(
+                new PurchaseConfirmationDelivery
+                {
+                    Reference = confirmationReference,
+                    Recipient = user.Email,
+                    Locale = accountInfo?.Locale,
+                    Payload = JsonConvert.SerializeObject(payment),
+                    CreatedAt = now,
+                    NextAttemptAt = now
+                });
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException)
+            {
+                db.ChangeTracker.Clear();
+                if (!await db.PurchaseConfirmationDeliveries.AnyAsync(
+                        delivery => delivery.Reference == confirmationReference))
+                    throw;
+            }
+        }
+
+        internal static string PurchaseConfirmationReference(
+            string provider,
+            string paymentId,
+            string confirmationType = null)
+        {
+            provider = provider?.Trim().ToLowerInvariant();
+            paymentId = paymentId?.Trim();
+            confirmationType = confirmationType?.Trim().ToLowerInvariant();
+            var hash = System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(
+                    confirmationType == null
+                        ? $"{provider}\0{paymentId}"
+                        : $"{provider}\0{paymentId}\0{confirmationType}"));
+            return "mail" + Convert.ToHexString(hash)[..24];
         }
 
         private static string FormatCoins(double amount)

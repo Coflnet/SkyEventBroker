@@ -12,6 +12,7 @@ namespace Coflnet.Sky.EventBroker.Models
         public DbSet<NotificationTarget> NotificationTargets { get; set; }
         public DbSet<Subscription> Subscriptions { get; set; }
         public DbSet<MessageSchedule> ScheduledMessages { get; set; }
+        public DbSet<PurchaseConfirmationDelivery> PurchaseConfirmationDeliveries { get; set; }
 
         /// <summary>
         /// Creates a new instance of <see cref="EventDbContext"/>
@@ -46,6 +47,11 @@ namespace Coflnet.Sky.EventBroker.Models
             {
                 entity.HasIndex(e => e.UserId);
                 entity.HasIndex(e => e.ScheduledTime);
+            });
+            modelBuilder.Entity<PurchaseConfirmationDelivery>(entity =>
+            {
+                entity.HasIndex(e => e.Reference).IsUnique();
+                entity.HasIndex(e => new { e.SentAt, e.NextAttemptAt });
             });
         }
     }

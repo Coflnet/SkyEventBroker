@@ -65,6 +65,11 @@ namespace Coflnet.Sky.EventBroker.Services
                     throw;
                 }
             }, stoppingToken, "sky-eventbroker", AutoOffsetReset.Earliest, new TransactionDeserializer());
+            var paymentCons = Kafka.KafkaConsumer.Consume(config, config["TOPICS:PAYMENTS"], async payment =>
+            {
+                using var scope = scopeFactory.CreateScope();
+                await GetService(scope).NewPayment(payment);
+            }, stoppingToken, "sky-eventbroker-payment-confirmations", AutoOffsetReset.Latest, new PaymentDeserializer());
             var verfify = Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config, config["TOPICS:VERIFIED"], async batch =>
             {
                 try
@@ -139,6 +144,8 @@ namespace Coflnet.Sky.EventBroker.Services
                 }
                 logger.LogInformation("Stopping cleanup task");
             });
+            var purchaseConfirmationDelivery =
+                DeliverPurchaseConfirmations(stoppingToken);
 
             stoppingToken.Register(() =>
             {
@@ -146,12 +153,45 @@ namespace Coflnet.Sky.EventBroker.Services
                 Console.WriteLine("quiting");
             });
 
-            await Task.WhenAny(flipCons, verfify, cleanUp, notification, lowball);
-            logger.LogError("One task exited");
-            await notification;
-            logger.LogError("Notification task exited");
+            var completed = await Task.WhenAny(
+                flipCons,
+                paymentCons,
+                verfify,
+                cleanUp,
+                notification,
+                lowball,
+                purchaseConfirmationDelivery);
+            logger.LogError("A background task exited");
+            await completed;
+            throw new Exception("A background task exited without an error");
+        }
 
-            throw new Exception("a background task exited");
+        private async Task DeliverPurchaseConfirmations(
+            CancellationToken stoppingToken)
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var service = scope.ServiceProvider
+                        .GetRequiredService<PurchaseConfirmationDeliveryService>();
+                    if (!await service.ProcessOneAsync(stoppingToken))
+                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                    when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(
+                        exception,
+                        "Purchase confirmation delivery iteration failed");
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                }
+            }
         }
 
         private async Task ProcessNotification(FirebaseNotification notification)
@@ -255,6 +295,13 @@ namespace Coflnet.Sky.EventBroker.Services
             public TransactionEvent Deserialize(ReadOnlySpan<byte> data, bool isNull, SerializationContext context)
             {
                 return Newtonsoft.Json.JsonConvert.DeserializeObject<TransactionEvent>(System.Text.Encoding.UTF8.GetString(data));
+            }
+        }
+        public class PaymentDeserializer : IDeserializer<PaymentEvent>
+        {
+            public PaymentEvent Deserialize(ReadOnlySpan<byte> data, bool isNull, SerializationContext context)
+            {
+                return Newtonsoft.Json.JsonConvert.DeserializeObject<PaymentEvent>(System.Text.Encoding.UTF8.GetString(data));
             }
         }
         public class NotificationDeserializer : IDeserializer<FirebaseNotification>
