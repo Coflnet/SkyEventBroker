@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Coflnet.Sky.EventBroker.Services;
 
@@ -21,19 +22,100 @@ public sealed class LegalDocumentProvider : IHostedService
     private readonly IHttpClientFactory clients;
     private readonly IConfiguration configuration;
     private readonly IHostEnvironment environment;
-    private readonly Dictionary<string, LegalDocuments> localized = [];
+    private readonly ILogger<LegalDocumentProvider> logger;
+    private readonly CancellationTokenSource stopping = new();
+    private Task refreshTask;
+
+    // Swapped in atomically once a full (en + de) load succeeds, so readers either see the
+    // previous complete snapshot or the new one - never a half-populated one.
+    private volatile Dictionary<string, LegalDocuments> localized;
 
     public LegalDocumentProvider(
         IHttpClientFactory clients,
         IConfiguration configuration,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        ILogger<LegalDocumentProvider> logger = null)
     {
         this.clients = clients;
         this.configuration = configuration;
         this.environment = environment;
+        this.logger = logger;
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Kicks off loading in the background and returns immediately, so a slow or unreachable
+    /// coflnet.com does not prevent the rest of the host (flips, notifications, verifications)
+    /// from starting. <see cref="Get"/> throws until the first load completes.
+    /// </summary>
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        refreshTask = RefreshUntilLoaded(stopping.Token);
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        stopping.Cancel();
+        if (refreshTask == null)
+            return;
+        try
+        {
+            await refreshTask.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Returns the loaded legal documents for the given locale.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The documents have not finished loading yet (e.g. coflnet.com is unreachable). Callers
+    /// (the purchase confirmation outbox) should simply retry later.
+    /// </exception>
+    public LegalDocuments Get(string locale)
+    {
+        var current = localized;
+        if (current == null)
+            throw new InvalidOperationException(
+                "The SkyCofl legal documents are not loaded yet; try again shortly.");
+        return current[LocaleHelper.IsGerman(locale) ? "de" : "en"];
+    }
+
+    private async Task RefreshUntilLoaded(CancellationToken cancellationToken)
+    {
+        var seconds = Math.Clamp(
+            configuration.GetValue("LEGAL_MANIFEST_RETRY_SECONDS", 300),
+            1,
+            3600);
+        while (localized == null && !cancellationToken.IsCancellationRequested)
+        {
+            await TryRefresh(cancellationToken);
+            if (localized == null && !cancellationToken.IsCancellationRequested)
+                await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
+        }
+    }
+
+    private async Task TryRefresh(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await LoadCurrent(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger?.LogWarning(
+                exception,
+                "The SkyCofl legal manifest is unavailable; purchase confirmations remain delayed until it loads");
+        }
+    }
+
+    private async Task LoadCurrent(CancellationToken cancellationToken)
     {
         var manifestUri = new Uri(
             configuration["LEGAL_MANIFEST_URL"]
@@ -81,6 +163,7 @@ public sealed class LegalDocumentProvider : IHostedService
             throw new InvalidOperationException(
                 "The legal manifest lacks confirmation documents.");
 
+        var loaded = new Dictionary<string, LegalDocuments>();
         foreach (var language in new[] { "en", "de" })
         {
             var documents = new List<LegalDocument>();
@@ -104,7 +187,7 @@ public sealed class LegalDocumentProvider : IHostedService
                     cancellationToken));
             }
 
-            localized[language] = new(
+            loaded[language] = new(
                 AgreementId,
                 agreement.AgreementHash.ToLowerInvariant(),
                 agreement.AgreementUrl,
@@ -119,13 +202,10 @@ public sealed class LegalDocumentProvider : IHostedService
                     false,
                     cancellationToken));
         }
+
+        // publish atomically: readers never observe a partially populated set of locales
+        localized = loaded;
     }
-
-    public Task StopAsync(CancellationToken cancellationToken) =>
-        Task.CompletedTask;
-
-    public LegalDocuments Get(string locale) =>
-        localized[PurchaseConfirmationEmailService.IsGerman(locale) ? "de" : "en"];
 
     private static async Task<LegalDocument> Download(
         HttpClient client,
@@ -169,7 +249,8 @@ public sealed class LegalDocumentProvider : IHostedService
             document.Version,
             locale.Url,
             content,
-            hash);
+            hash,
+            document.AcceptanceHash);
     }
 
     private static bool TryUri(Uri source, string value, out Uri uri)
@@ -265,7 +346,8 @@ public sealed record LegalDocument(
     string Version,
     string Url,
     byte[] Content,
-    string Hash)
+    string Hash,
+    string AcceptanceHash)
 {
     internal Attachment CreateAttachment() =>
         new(new MemoryStream(Content), FileName, "text/markdown");

@@ -18,6 +18,9 @@ namespace Coflnet.Sky.EventBroker.Services
 {
     public class MessageService
     {
+        private static readonly Prometheus.Counter purchaseConfirmationNoEmailCount = Prometheus.Metrics.CreateCounter(
+            "sky_eventbroker_purchase_confirmation_no_email",
+            "How many purchase confirmations were dropped because no email address could be found for the paying user");
         private EventDbContext db;
         private ConnectionMultiplexer connection;
         private Payments.Client.Api.ProductsApi productsApi;
@@ -58,7 +61,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 message.Reference = message.Message.GetHashCode().ToString();
             if (!doubleNotificationPreventer.HasNeverBeenSeen(message.User.UserId, message.Reference))
             {
-                Logger.LogInformation("Message {message} already sent for {userId} (reference {reference})", message.Message, message.User.UserId, message.Reference);
+                Logger.LogInformation("Message already sent for {userId} (reference {reference})", message.User.UserId, message.Reference);
                 return message;
             }
             var subs = await db.Subscriptions.Where(s => (s.SourceType == message.SourceType || s.SourceType == "*" || s.SourceType == "Any") && s.UserId == message.User.UserId).Include(s => s.Targets).ThenInclude(t => t.Target).ToListAsync();
@@ -69,10 +72,6 @@ namespace Coflnet.Sky.EventBroker.Services
                 receivedCount = await SendInGame(message);
             }
             Logger.LogInformation("published for {user} source {source} count {count}, subscriptions {subcount}", message.User.UserId, message.SourceType, receivedCount, subs.Count);
-            if (message.User.Id < 10)
-            {
-                Logger.LogInformation("message {message}", JsonConvert.SerializeObject(message));
-            }
             foreach (var sub in subs)
             {
                 if (!IsAllowed(message, sub))
@@ -84,13 +83,13 @@ namespace Coflnet.Sky.EventBroker.Services
                 {
                     if (target.IsDisabled)
                     {
-                        Logger.LogInformation("target {target} is disabled, skipping", target.Target.Target);
+                        Logger.LogInformation("target {targetId} ({targetType}) is disabled, skipping", target.Target.Id, target.Target.Type);
                         continue;
                     }
                     if (target.Target.When == NotificationTarget.NotifyWhen.NEVER)
                     {
                         // "never notify" targets (e.g. the in-game disable marker) only signal intent, they are never sent to
-                        Logger.LogInformation("target {target} is set to never notify, skipping", target.Target.Target);
+                        Logger.LogInformation("target {targetId} ({targetType}) is set to never notify, skipping", target.Target.Id, target.Target.Type);
                         continue;
                     }
                     try
@@ -101,17 +100,17 @@ namespace Coflnet.Sky.EventBroker.Services
                             target.IsDisabled = true;
                             db.Update(target);
                             await db.SaveChangesAsync();
-                            Logger.LogInformation("disabled target {target} for user {userId} as it was rejected", target.Target.Target, message.User.UserId);
+                            Logger.LogInformation("disabled target {targetId} ({targetType}) for user {userId} as it was rejected", target.Target.Id, target.Target.Type, message.User.UserId);
                         }
                         else if (result == PushResult.Sent)
-                            Logger.LogInformation("sent message to {target} from user {userId}", target.Target.Target, message.User.UserId);
+                            Logger.LogInformation("sent message to target {targetId} ({targetType}) from user {userId}", target.Target.Id, target.Target.Type, message.User.UserId);
                         else
                             // temporary failures and missing config must not disable the target, it would need manual reactivation
-                            Logger.LogWarning("could not send message to {target} from user {userId} ({result})", target.Target.Target, message.User.UserId, result);
+                            Logger.LogWarning("could not send message to target {targetId} ({targetType}) from user {userId} ({result})", target.Target.Id, target.Target.Type, message.User.UserId, result);
                     }
                     catch (Exception e)
                     {
-                        Logger.LogError(e, "Error while sending message to {target} from user {userId}", target.Target.Target, message.User.UserId);
+                        Logger.LogError("Error {errorType} while sending message to target {targetId} ({targetType}) from user {userId}", e.GetType().Name, target.Target.Id, target.Target.Type, message.User.UserId);
                     }
                 }
             }
@@ -127,7 +126,7 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             catch (Exception e)
             {
-                Logger.LogError(e, "Error while saving message {message}", JsonConvert.SerializeObject(message));
+                Logger.LogError("Error {errorType} while saving message for user {userId} (reference {reference})", e.GetType().Name, message.User.UserId, message.Reference);
             }
 
             return message;
@@ -215,9 +214,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 return false;
             var client = new System.Net.Http.HttpClient();
             if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
-            {
-                Console.WriteLine("Invalid link " + message.Link);
-            }
+                Logger.LogWarning("Notification contained an invalid link; using the default");
             message.Link ??= "https://sky.coflnet.com";
             var replacedMinecraftFormat = Regex.Replace(message.Message, "§[0-9a-fklmnor]", "");
             var body = JsonConvert.SerializeObject(new
@@ -232,7 +229,7 @@ namespace Coflnet.Sky.EventBroker.Services
                     } }
             });
             var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
-            Logger.LogInformation("sent to {webhook}\n{body}\n {response} {content}", url, body, response.StatusCode, response.Content.ReadAsStringAsync().Result);
+            Logger.LogInformation("sent to webhook target {targetId} with status {status}", target.Id, response.StatusCode);
             return response.StatusCode <= System.Net.HttpStatusCode.NoContent;
         }
 
@@ -323,7 +320,7 @@ namespace Coflnet.Sky.EventBroker.Services
         {
             if (payment == null
                 || string.IsNullOrWhiteSpace(payment.PaymentProviderTransactionId)
-                || !int.TryParse(payment.UserId, out _))
+                || string.IsNullOrWhiteSpace(payment.UserId))
                 return;
 
             var confirmationReference = PurchaseConfirmationReference(
@@ -333,10 +330,26 @@ namespace Coflnet.Sky.EventBroker.Services
             if (await db.PurchaseConfirmationDeliveries.AnyAsync(
                     delivery => delivery.Reference == confirmationReference))
                 return;
-            var user = await userApi.UserEmailGetAsync(payment.UserId);
-            if (string.IsNullOrWhiteSpace(user?.Email))
-                throw new InvalidOperationException(
-                    $"No account email found for paid transaction {confirmationReference}");
+            // the event already carries the email on the stripe/paypal paths; only hit the
+            // indexer when it doesn't, to avoid a needless round-trip
+            var email = payment.Email;
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                var user = await userApi.UserEmailGetAsync(payment.UserId);
+                email = user?.Email;
+            }
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                // this is a data condition (the account has no email on file), not something
+                // retrying the same message will fix - throwing here would poison the Kafka
+                // consumer loop (see Kafka.KafkaConsumer.Consume), so log and drop instead
+                purchaseConfirmationNoEmailCount.Inc();
+                Logger.LogError(
+                    "No account email found for paid transaction {reference} (provider {provider}); dropping purchase confirmation",
+                    confirmationReference,
+                    payment.PaymentProvider);
+                return;
+            }
             var accountInfo = await settingsService.GetCurrentValue<AccountInfo>(
                 payment.UserId,
                 "accountInfo",
@@ -346,7 +359,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 new PurchaseConfirmationDelivery
                 {
                     Reference = confirmationReference,
-                    Recipient = user.Email,
+                    Recipient = email,
                     Locale = accountInfo?.Locale,
                     Payload = JsonConvert.SerializeObject(payment),
                     CreatedAt = now,

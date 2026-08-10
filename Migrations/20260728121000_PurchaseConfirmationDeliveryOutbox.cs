@@ -44,6 +44,9 @@ public partial class PurchaseConfirmationDeliveryOutbox : Migration
                 SentAt = table.Column<DateTime>(
                     type: "timestamp with time zone",
                     nullable: true),
+                FailedAt = table.Column<DateTime>(
+                    type: "timestamp with time zone",
+                    nullable: true),
                 Attempts = table.Column<int>(type: "integer", nullable: false),
                 LeaseId = table.Column<Guid>(type: "uuid", nullable: true),
                 LeaseUntil = table.Column<DateTime>(
@@ -68,9 +71,9 @@ public partial class PurchaseConfirmationDeliveryOutbox : Migration
             unique: true);
 
         migrationBuilder.CreateIndex(
-            name: "IX_PurchaseConfirmationDeliveries_SentAt_NextAttemptAt",
+            name: "IX_PurchaseConfirmationDeliveries_SentAt_FailedAt_NextAttemptAt",
             table: "PurchaseConfirmationDeliveries",
-            columns: new[] { "SentAt", "NextAttemptAt" });
+            columns: new[] { "SentAt", "FailedAt", "NextAttemptAt" });
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)

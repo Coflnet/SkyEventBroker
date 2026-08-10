@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text;
 using Coflnet.Sky.EventBroker.Models;
 using NUnit.Framework;
@@ -95,6 +96,58 @@ public class PurchaseConfirmationEmailServiceTests
                 "trial")));
     }
 
+    [Test]
+    public void ValidateAgreement_MatchingTermsAcceptanceHashDoesNotThrow()
+    {
+        var documents = TestDocuments("en");
+        var terms = documents.AgreementDocuments.Single(
+            document => document.Key == "terms");
+
+        Assert.DoesNotThrow(() => PurchaseConfirmationEmailService.ValidateAgreement(
+            new PaymentEvent { TermsAcceptanceHash = terms.AcceptanceHash },
+            documents));
+    }
+
+    [Test]
+    public void ValidateAgreement_MismatchedTermsAcceptanceHashThrows()
+    {
+        var documents = TestDocuments("en");
+
+        Assert.Throws<InvalidOperationException>(() => PurchaseConfirmationEmailService.ValidateAgreement(
+            new PaymentEvent { TermsAcceptanceHash = "not-the-recorded-hash" },
+            documents));
+    }
+
+    [Test]
+    public void ValidateAgreement_MatchingWithdrawalVersionDoesNotThrow()
+    {
+        var documents = TestDocuments("en");
+
+        Assert.DoesNotThrow(() => PurchaseConfirmationEmailService.ValidateAgreement(
+            new PaymentEvent { WithdrawalVersion = documents.Withdrawal.Version },
+            documents));
+    }
+
+    [Test]
+    public void ValidateAgreement_MismatchedWithdrawalVersionThrows()
+    {
+        var documents = TestDocuments("en");
+
+        Assert.Throws<InvalidOperationException>(() => PurchaseConfirmationEmailService.ValidateAgreement(
+            new PaymentEvent { WithdrawalVersion = "not-the-loaded-version" },
+            documents));
+    }
+
+    [Test]
+    public void ValidateAgreement_BlankFieldsAreNotValidated()
+    {
+        var documents = TestDocuments("en");
+
+        Assert.DoesNotThrow(() => PurchaseConfirmationEmailService.ValidateAgreement(
+            new PaymentEvent(),
+            documents));
+    }
+
     private static LegalDocuments TestDocuments(string language) =>
         new(
             "skycofl",
@@ -102,10 +155,10 @@ public class PurchaseConfirmationEmailServiceTests
             $"https://coflnet.com/legal/agreements/{new string('a', 64)}.json",
             Encoding.UTF8.GetBytes("{}"),
             [
-                Document("terms-of-service", language),
-                Document("commerce-and-programme-terms", language),
-                Document("ai-feature-terms", language),
-                Document("skycofl-service-terms", language)
+                Document("terms", language),
+                Document("commerceTerms", language),
+                Document("aiTerms", language),
+                Document("skycoflTerms", language)
             ],
             Document("withdrawal", language));
 
@@ -117,5 +170,6 @@ public class PurchaseConfirmationEmailServiceTests
             "2026-08-08",
             $"https://coflnet.com/legal/archive/{key}-{language}-2026-08-08.md",
             Encoding.UTF8.GetBytes(key),
-            $"{key}-{language}-hash");
+            $"{key}-{language}-hash",
+            $"{key}-acceptance-hash");
 }

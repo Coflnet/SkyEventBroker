@@ -51,7 +51,7 @@ namespace Coflnet.Sky.EventBroker.Models
             modelBuilder.Entity<PurchaseConfirmationDelivery>(entity =>
             {
                 entity.HasIndex(e => e.Reference).IsUnique();
-                entity.HasIndex(e => new { e.SentAt, e.NextAttemptAt });
+                entity.HasIndex(e => new { e.SentAt, e.FailedAt, e.NextAttemptAt });
             });
         }
     }

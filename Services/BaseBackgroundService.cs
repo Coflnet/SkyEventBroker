@@ -69,7 +69,7 @@ namespace Coflnet.Sky.EventBroker.Services
             {
                 using var scope = scopeFactory.CreateScope();
                 await GetService(scope).NewPayment(payment);
-            }, stoppingToken, "sky-eventbroker-payment-confirmations", AutoOffsetReset.Latest, new PaymentDeserializer());
+            }, stoppingToken, "sky-eventbroker-payment-confirmations", AutoOffsetReset.Earliest, new PaymentDeserializer());
             var verfify = Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config, config["TOPICS:VERIFIED"], async batch =>
             {
                 try
@@ -189,7 +189,15 @@ namespace Coflnet.Sky.EventBroker.Services
                     logger.LogError(
                         exception,
                         "Purchase confirmation delivery iteration failed");
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    }
+                    catch (OperationCanceledException)
+                        when (stoppingToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -198,7 +206,7 @@ namespace Coflnet.Sky.EventBroker.Services
         {
             if (!(notification.data?.TryGetValue("userId", out var userId) ?? false))
             {
-                logger.LogError("Notification event received without userId, {notification}", JsonConvert.SerializeObject(notification));
+                logger.LogError("Notification event received without userId");
                 return;
             }
             using var scope = scopeFactory.CreateScope();

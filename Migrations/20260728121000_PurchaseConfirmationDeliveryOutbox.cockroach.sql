@@ -46,6 +46,7 @@ CREATE TABLE public."PurchaseConfirmationDeliveries" (
     "CreatedAt" timestamp with time zone NOT NULL,
     "NextAttemptAt" timestamp with time zone NOT NULL,
     "SentAt" timestamp with time zone,
+    "FailedAt" timestamp with time zone,
     "Attempts" integer NOT NULL,
     "LeaseId" uuid,
     "LeaseUntil" timestamp with time zone,
@@ -56,8 +57,8 @@ CREATE TABLE public."PurchaseConfirmationDeliveries" (
 CREATE UNIQUE INDEX "IX_PurchaseConfirmationDeliveries_Reference"
 ON public."PurchaseConfirmationDeliveries" ("Reference");
 
-CREATE INDEX "IX_PurchaseConfirmationDeliveries_SentAt_NextAttemptAt"
-ON public."PurchaseConfirmationDeliveries" ("SentAt", "NextAttemptAt");
+CREATE INDEX "IX_PurchaseConfirmationDeliveries_SentAt_FailedAt_NextAttemptAt"
+ON public."PurchaseConfirmationDeliveries" ("SentAt", "FailedAt", "NextAttemptAt");
 
 -- The application already connects to sky_event, but make its database/schema
 -- access and least-privilege access to the new objects explicit.

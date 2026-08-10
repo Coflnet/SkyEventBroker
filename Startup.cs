@@ -60,8 +60,7 @@ namespace Coflnet.Sky.EventBroker
                 dbContextOptions => dbContextOptions
                     .UseNpgsql(Configuration["COCKROACH_DB_CONNECTION"])
                     .ReplaceService<IHistoryRepository, CockroachHistoryRepository>()
-                    .EnableSensitiveDataLogging() // <-- These two calls are optional but help
-                    .EnableDetailedErrors()       // <-- with debugging (remove for production).
+                    .EnableDetailedErrors()
             );
 
             services.AddSingleton((config) =>
@@ -69,7 +68,8 @@ namespace Coflnet.Sky.EventBroker
                 config.GetRequiredService<ILogger<Startup>>().LogInformation($"Connecting to Redis with '{Configuration["REDIS_HOST"]}'");
                 return StackExchange.Redis.ConnectionMultiplexer.Connect(Configuration["REDIS_HOST"]);
             });
-            services.AddHttpClient(nameof(LegalDocumentProvider));
+            services.AddHttpClient(nameof(LegalDocumentProvider))
+                .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(30));
             services.AddSingleton<LegalDocumentProvider>();
             services.AddHostedService(service =>
                 service.GetRequiredService<LegalDocumentProvider>());

@@ -149,6 +149,9 @@ namespace SkyBase.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("FailedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("LastError")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
@@ -186,7 +189,7 @@ namespace SkyBase.Migrations
                     b.HasIndex("Reference")
                         .IsUnique();
 
-                    b.HasIndex("SentAt", "NextAttemptAt");
+                    b.HasIndex("SentAt", "FailedAt", "NextAttemptAt");
 
                     b.ToTable("PurchaseConfirmationDeliveries");
                 });

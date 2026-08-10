@@ -63,24 +63,14 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
             : 587;
         var from = config["SMTP_FROM"] ?? "noreply@coflnet.com";
         var documents = legalDocuments.Get(locale);
-        if (!string.IsNullOrWhiteSpace(payment.AgreementId)
-            && (!string.Equals(
-                    payment.AgreementId,
-                    documents.AgreementId,
-                    StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(
-                    payment.AgreementHash,
-                    documents.AgreementHash,
-                    StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException(
-                "The purchase agreement does not match the loaded SkyCofl agreement root.");
+        ValidateAgreement(payment, documents);
 
         var text = BuildContent(payment, locale, documents);
         var subject = IsMerchantOfRecord(payment.PaymentProvider)
-            ? IsGerman(locale)
+            ? LocaleHelper.IsGerman(locale)
                 ? "Bereitstellungsbestätigung — Coflnet"
                 : "Fulfillment confirmation — Coflnet"
-            : IsGerman(locale)
+            : LocaleHelper.IsGerman(locale)
                 ? "Kaufbestätigung — Coflnet"
                 : "Purchase confirmation — Coflnet";
 
@@ -114,12 +104,42 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
         }
     }
 
+    /// <summary>
+    /// Confirms the accepted-terms hash and withdrawal version recorded on the payment (when
+    /// present) still match the currently loaded SkyCofl agreement documents. A mismatch means the
+    /// customer accepted a different version than what we would attach today, so it throws rather
+    /// than silently sending stale/incorrect legal documents; the delivery outbox catches this and
+    /// retries/parks the row instead of crashing the whole delivery loop.
+    /// </summary>
+    internal static void ValidateAgreement(PaymentEvent payment, LegalDocuments documents)
+    {
+        if (!string.IsNullOrWhiteSpace(payment.TermsAcceptanceHash))
+        {
+            var terms = documents.AgreementDocuments.FirstOrDefault(
+                document => string.Equals(document.Key, "terms", StringComparison.OrdinalIgnoreCase));
+            if (terms == null
+                || !string.Equals(
+                    payment.TermsAcceptanceHash,
+                    terms.AcceptanceHash,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "The purchase's accepted terms hash does not match the loaded SkyCofl terms document.");
+        }
+        if (!string.IsNullOrWhiteSpace(payment.WithdrawalVersion)
+            && !string.Equals(
+                payment.WithdrawalVersion,
+                documents.Withdrawal.Version,
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "The purchase's withdrawal instructions version does not match the loaded SkyCofl withdrawal document.");
+    }
+
     internal static string BuildContent(
         PaymentEvent payment,
         string locale,
         LegalDocuments documents)
     {
-        var german = IsGerman(locale);
+        var german = LocaleHelper.IsGerman(locale);
         var provider = payment.PaymentProvider ?? "";
         var merchantOfRecord = IsMerchantOfRecord(provider);
         var amount = payment.PayedAmount > 0
@@ -135,14 +155,14 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
             ? german
                 ? $"""
 
-CoflCoins: {payment.CoinAmount:0.##}
+CoflCoins: {payment.CoinAmount?.ToString("0.##", CultureInfo.InvariantCulture)}
 Leistungsbeginn: {FormatUtc(payment.ServiceStartsAtUtc)}
 Leistungsende: {FormatUtc(payment.ServiceEndsAtUtc)}
 {(string.IsNullOrWhiteSpace(payment.DeclarationText) ? "" : $"Ihre Erklärung ({payment.DeclarationVersion}): {payment.DeclarationText}")}
 """
                 : $"""
 
-CoflCoins: {payment.CoinAmount:0.##}
+CoflCoins: {payment.CoinAmount?.ToString("0.##", CultureInfo.InvariantCulture)}
 Service starts: {FormatUtc(payment.ServiceStartsAtUtc)}
 Service ends: {FormatUtc(payment.ServiceEndsAtUtc)}
 {(string.IsNullOrWhiteSpace(payment.DeclarationText) ? "" : $"Your declaration ({payment.DeclarationVersion}): {payment.DeclarationText}")}
@@ -205,16 +225,9 @@ Privacy policy: {PrivacyUrl}
 """;
     }
 
-    internal static bool IsGerman(string locale) =>
-        string.Equals(locale, "DE", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(locale, "de", StringComparison.OrdinalIgnoreCase)
-        || locale?.StartsWith("de-", StringComparison.OrdinalIgnoreCase) == true
-        || locale?.StartsWith("de_", StringComparison.OrdinalIgnoreCase) == true;
-
     private static bool IsMerchantOfRecord(string provider) =>
         string.Equals(provider, "lemonsqueezy", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(provider, "Google Play", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(provider, "googlepay", StringComparison.OrdinalIgnoreCase);
+        || string.Equals(provider, "Google Play", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsServicePurchase(PaymentEvent payment) =>
         string.Equals(
