@@ -360,7 +360,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 {
                     Reference = confirmationReference,
                     Recipient = email,
-                    Locale = accountInfo?.Locale,
+                    Locale = payment.LegalLocale ?? accountInfo?.Locale,
                     Payload = JsonConvert.SerializeObject(payment),
                     CreatedAt = now,
                     NextAttemptAt = now

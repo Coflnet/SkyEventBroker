@@ -105,15 +105,26 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
     }
 
     /// <summary>
-    /// Confirms the accepted-terms hash and withdrawal version recorded on the payment (when
-    /// present) still match the currently loaded SkyCofl agreement documents. A mismatch means the
-    /// customer accepted a different version than what we would attach today, so it throws rather
-    /// than silently sending stale/incorrect legal documents; the delivery outbox catches this and
-    /// retries/parks the row instead of crashing the whole delivery loop.
+    /// Confirms the recorded agreement root (or a legacy Terms hash) and
+    /// withdrawal identity match the documents that will be attached.
     /// </summary>
     internal static void ValidateAgreement(PaymentEvent payment, LegalDocuments documents)
     {
-        if (!string.IsNullOrWhiteSpace(payment.TermsAcceptanceHash))
+        if (!string.IsNullOrWhiteSpace(payment.AgreementId)
+            || !string.IsNullOrWhiteSpace(payment.AgreementHash))
+        {
+            if (!string.Equals(
+                    payment.AgreementId,
+                    documents.AgreementId,
+                    StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(
+                    payment.AgreementHash,
+                    documents.AgreementHash,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "The purchase's accepted agreement root does not match the loaded SkyCofl agreement.");
+        }
+        else if (!string.IsNullOrWhiteSpace(payment.TermsAcceptanceHash))
         {
             var terms = documents.AgreementDocuments.FirstOrDefault(
                 document => string.Equals(document.Key, "terms", StringComparison.OrdinalIgnoreCase));
@@ -130,8 +141,15 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
                 payment.WithdrawalVersion,
                 documents.Withdrawal.Version,
                 StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "The purchase's withdrawal instructions version does not match the loaded SkyCofl withdrawal document.");
+        if (!string.IsNullOrWhiteSpace(payment.WithdrawalSha256)
+            && !string.Equals(
+                payment.WithdrawalSha256,
+                documents.Withdrawal.Hash,
+                StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
-                "The purchase's withdrawal instructions version does not match the loaded SkyCofl withdrawal document.");
+                "The purchase's withdrawal instructions hash does not match the loaded SkyCofl withdrawal document.");
     }
 
     internal static string BuildContent(

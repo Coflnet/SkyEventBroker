@@ -109,6 +109,39 @@ public class PurchaseConfirmationEmailServiceTests
     }
 
     [Test]
+    public void ValidateAgreement_MatchingRootAndWithdrawalHashDoesNotThrow()
+    {
+        var documents = TestDocuments("en");
+
+        Assert.DoesNotThrow(() => PurchaseConfirmationEmailService.ValidateAgreement(
+            new PaymentEvent
+            {
+                AgreementId = documents.AgreementId,
+                AgreementHash = documents.AgreementHash,
+                WithdrawalSha256 = documents.Withdrawal.Hash
+            },
+            documents));
+    }
+
+    [TestCase("other", null)]
+    [TestCase(null, "wrong-hash")]
+    public void ValidateAgreement_MismatchedRootThrows(
+        string agreementId,
+        string agreementHash)
+    {
+        var documents = TestDocuments("en");
+
+        Assert.Throws<InvalidOperationException>(() =>
+            PurchaseConfirmationEmailService.ValidateAgreement(
+                new PaymentEvent
+                {
+                    AgreementId = agreementId ?? documents.AgreementId,
+                    AgreementHash = agreementHash ?? documents.AgreementHash
+                },
+                documents));
+    }
+
+    [Test]
     public void ValidateAgreement_MismatchedTermsAcceptanceHashThrows()
     {
         var documents = TestDocuments("en");

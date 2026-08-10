@@ -65,6 +65,7 @@ public class MessageServiceTests
         {
             UserId = "42",
             Email = "buyer@example.test",
+            LegalLocale = "de",
             PaymentProvider = "stripe",
             PaymentProviderTransactionId = "pi_has_email"
         };
@@ -77,6 +78,7 @@ public class MessageServiceTests
             Times.Never);
         var delivery = await db.PurchaseConfirmationDeliveries.SingleAsync();
         Assert.That(delivery.Recipient, Is.EqualTo("buyer@example.test"));
+        Assert.That(delivery.Locale, Is.EqualTo("de"));
     }
 
     [Test]

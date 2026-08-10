@@ -20,7 +20,11 @@ public class PaymentEvent
     public DateTime? ServiceEndsAtUtc { get; set; }
     public string DeclarationVersion { get; set; }
     public string DeclarationText { get; set; }
+    public string LegalLocale { get; set; }
+    public string AgreementId { get; set; }
+    public string AgreementHash { get; set; }
     public string TermsVersion { get; set; }
     public string TermsAcceptanceHash { get; set; }
     public string WithdrawalVersion { get; set; }
+    public string WithdrawalSha256 { get; set; }
 }
