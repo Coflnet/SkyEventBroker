@@ -11,6 +11,9 @@ namespace Coflnet.Sky.EventBroker.Services;
 
 public sealed class PurchaseConfirmationDeliveryService
 {
+    private static readonly Prometheus.Counter parkedCount = Prometheus.Metrics.CreateCounter(
+        "sky_eventbroker_purchase_confirmation_parked_total",
+        "Purchase confirmations parked after exhausting their delivery retries");
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -99,7 +102,7 @@ public sealed class PurchaseConfirmationDeliveryService
 
             if (row.Attempts >= MaxAttempts)
             {
-                await db.PurchaseConfirmationDeliveries
+                var parked = await db.PurchaseConfirmationDeliveries
                     .Where(item => item.Id == row.Id && item.LeaseId == leaseId)
                     .ExecuteUpdateAsync(update => update
                         .SetProperty(item => item.FailedAt, failedAt)
@@ -107,6 +110,8 @@ public sealed class PurchaseConfirmationDeliveryService
                         .SetProperty(item => item.LeaseUntil, (DateTime?)null)
                         .SetProperty(item => item.LastError, error),
                         cancellationToken);
+                if (parked > 0)
+                    parkedCount.Inc();
                 logger.LogError(
                     exception,
                     "Purchase confirmation {Reference} failed permanently after {Attempts} attempts and was parked",
