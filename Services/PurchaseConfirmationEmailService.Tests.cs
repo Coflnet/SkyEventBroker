@@ -26,7 +26,10 @@ public class PurchaseConfirmationEmailServiceTests
             "en",
             documents);
 
-        Assert.That(text, Does.Contain("Purchase confirmation")
+        Assert.That(text, Does.Contain("ORDER\n-----")
+            .And.Contain("PAYMENT\n-------")
+            .And.Contain("AGREEMENT\n---------")
+            .And.Contain("WITHDRAWAL\n----------")
             .And.Contain("Amount: 12.34 EUR")
             .And.Contain("Payment method: card")
             .And.Contain(documents.AgreementHash)
@@ -34,6 +37,36 @@ public class PurchaseConfirmationEmailServiceTests
             .And.Contain(documents.Withdrawal.Hash));
         foreach (var document in documents.AgreementDocuments)
             Assert.That(text, Does.Contain(document.Url).And.Contain(document.Hash));
+    }
+
+    [Test]
+    public void BuildContent_ServicePurchaseSeparatesPeriodAndDeclaration()
+    {
+        var text = PurchaseConfirmationEmailService.BuildContent(
+            new PaymentEvent
+            {
+                ProductId = "premium_plus-day",
+                PaymentProvider = "coflcoins",
+                PaymentProviderTransactionId = "367796",
+                ConfirmationType = "service_purchase",
+                CoinAmount = 600,
+                ServiceStartsAtUtc = new DateTime(2026, 8, 12, 11, 33, 53,
+                    DateTimeKind.Utc),
+                ServiceEndsAtUtc = new DateTime(2026, 8, 13, 11, 33, 53,
+                    DateTimeKind.Utc),
+                DeclarationVersion = "premium-service-start-2026-07-28",
+                DeclarationText = "I request early performance.",
+                Timestamp = new DateTime(2026, 8, 12, 11, 33, 54,
+                    DateTimeKind.Utc)
+            },
+            "en",
+            TestDocuments("en"));
+
+        Assert.That(text, Does.Contain("CoflCoins: 600")
+            .And.Contain("SERVICE PERIOD\n--------------")
+            .And.Contain("EARLY-PERFORMANCE DECLARATION\n-----------------------------")
+            .And.Contain("Version: premium-service-start-2026-07-28")
+            .And.Contain("I request early performance."));
     }
 
     [Test]

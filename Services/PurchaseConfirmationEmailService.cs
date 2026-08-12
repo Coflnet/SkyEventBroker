@@ -173,34 +173,57 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
             ? german
                 ? $"""
 
-CoflCoins: {payment.CoinAmount?.ToString("0.##", CultureInfo.InvariantCulture)}
+LEISTUNGSZEITRAUM
+-----------------
 Leistungsbeginn: {FormatUtc(payment.ServiceStartsAtUtc)}
 Leistungsende: {FormatUtc(payment.ServiceEndsAtUtc)}
-{(string.IsNullOrWhiteSpace(payment.DeclarationText) ? "" : $"Ihre Erklärung ({payment.DeclarationVersion}): {payment.DeclarationText}")}
+{(string.IsNullOrWhiteSpace(payment.DeclarationText) ? "" : $"""
+
+ERKLÄRUNG ZUM VORZEITIGEN LEISTUNGSBEGINN
+------------------------------------------
+Version: {payment.DeclarationVersion}
+{payment.DeclarationText}
+""")}
 """
                 : $"""
 
-CoflCoins: {payment.CoinAmount?.ToString("0.##", CultureInfo.InvariantCulture)}
+SERVICE PERIOD
+--------------
 Service starts: {FormatUtc(payment.ServiceStartsAtUtc)}
 Service ends: {FormatUtc(payment.ServiceEndsAtUtc)}
-{(string.IsNullOrWhiteSpace(payment.DeclarationText) ? "" : $"Your declaration ({payment.DeclarationVersion}): {payment.DeclarationText}")}
+{(string.IsNullOrWhiteSpace(payment.DeclarationText) ? "" : $"""
+
+EARLY-PERFORMANCE DECLARATION
+-----------------------------
+Version: {payment.DeclarationVersion}
+{payment.DeclarationText}
+""")}
 """
             : "";
 
         if (german)
             return $"""
 {(merchantOfRecord ? "Bereitstellungsbestätigung" : "Kaufbestätigung")}
+===================================================
 
 {(merchantOfRecord
     ? $"Diese E-Mail bestätigt die Bereitstellung auf Ihrem Coflnet-Konto. {provider} war der beim Checkout ausgewiesene Verkäufer (Merchant of Record); dessen Beleg und Checkout-Bedingungen enthalten die verbindlichen Bestell-, Zahlungs- und Widerrufsangaben. Die beigefügten Coflnet-Dokumente betreffen nur das gesonderte SkyCofl-Nutzungsverhältnis und ändern den Verkauf durch {provider} nicht."
     : "Diese E-Mail bestätigt die Zahlung und Bereitstellung Ihres Vertrags mit der Coflnet GmbH.")}
 
-Produkt-ID: {payment.ProductId}
+BESTELLUNG
+----------
+Produkt: {payment.ProductId}
 Transaktionsreferenz: {payment.PaymentProviderTransactionId}
+Datum/Uhrzeit: {timestamp}
+
+ZAHLUNG
+-------
 Zahlungsanbieter: {provider}
-{(amount.Length == 0 ? "" : $"Betrag: {amount}\n")}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Zahlungsart: {payment.PaymentMethod}\n")}Datum/Uhrzeit: {timestamp}
+{(amount.Length == 0 ? "" : $"Betrag: {amount}\n")}{(payment.CoinAmount.HasValue ? $"CoflCoins: {payment.CoinAmount.Value.ToString("0.##", CultureInfo.InvariantCulture)}\n" : "")}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Zahlungsart: {payment.PaymentMethod}\n")}
 {serviceDetails}
 
+VEREINBARUNG
+-------------
 Erfasste Vereinbarung: {documents.AgreementId}
 Vereinbarungs-Hash: {documents.AgreementHash}
 Vereinbarungsdeskriptor: {documents.AgreementUrl}
@@ -208,26 +231,42 @@ Vereinbarungsdeskriptor: {documents.AgreementUrl}
 Beigefügte Vereinbarungsdokumente:
 {documentList}
 
-Widerrufsbelehrung ({documents.Withdrawal.Version}): {documents.Withdrawal.Url}
-Widerrufsbelehrung SHA-256: {documents.Withdrawal.Hash}
+WIDERRUF
+--------
+Widerrufsbelehrung ({documents.Withdrawal.Version}):
+{documents.Withdrawal.Url}
+SHA-256: {documents.Withdrawal.Hash}
+
+DATENSCHUTZ UND KONTAKT
+-----------------------
 Datenschutzerklärung: {PrivacyUrl}
+E-Mail: support@coflnet.com
 
 {Footer}
 """;
 
         return $"""
 {(merchantOfRecord ? "Fulfillment confirmation" : "Purchase confirmation")}
+===================================================
 
 {(merchantOfRecord
     ? $"This email confirms fulfillment on your Coflnet account. {provider} was the seller (merchant of record) identified at checkout; its receipt and checkout terms contain the authoritative order, payment and withdrawal information. The attached Coflnet documents cover only the separate SkyCofl usage relationship and do not alter the sale by {provider}."
     : "This email confirms payment and fulfillment of your contract with Coflnet GmbH.")}
 
-Product ID: {payment.ProductId}
+ORDER
+-----
+Product: {payment.ProductId}
 Transaction reference: {payment.PaymentProviderTransactionId}
+Date/time: {timestamp}
+
+PAYMENT
+-------
 Payment provider: {provider}
-{(amount.Length == 0 ? "" : $"Amount: {amount}\n")}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Payment method: {payment.PaymentMethod}\n")}Date/time: {timestamp}
+{(amount.Length == 0 ? "" : $"Amount: {amount}\n")}{(payment.CoinAmount.HasValue ? $"CoflCoins: {payment.CoinAmount.Value.ToString("0.##", CultureInfo.InvariantCulture)}\n" : "")}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Payment method: {payment.PaymentMethod}\n")}
 {serviceDetails}
 
+AGREEMENT
+---------
 Recorded agreement: {documents.AgreementId}
 Agreement hash: {documents.AgreementHash}
 Agreement descriptor: {documents.AgreementUrl}
@@ -235,9 +274,16 @@ Agreement descriptor: {documents.AgreementUrl}
 Attached agreement documents:
 {documentList}
 
-Withdrawal instructions ({documents.Withdrawal.Version}): {documents.Withdrawal.Url}
-Withdrawal instructions SHA-256: {documents.Withdrawal.Hash}
+WITHDRAWAL
+----------
+Withdrawal instructions ({documents.Withdrawal.Version}):
+{documents.Withdrawal.Url}
+SHA-256: {documents.Withdrawal.Hash}
+
+PRIVACY AND SUPPORT
+-------------------
 Privacy policy: {PrivacyUrl}
+Email: support@coflnet.com
 
 {Footer}
 """;
