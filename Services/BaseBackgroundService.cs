@@ -139,7 +139,6 @@ namespace Coflnet.Sky.EventBroker.Services
                     catch (Exception e)
                     {
                         logger.LogError(e, "Error while cleaning db");
-                        throw;
                     }
                 }
                 logger.LogInformation("Stopping cleanup task");

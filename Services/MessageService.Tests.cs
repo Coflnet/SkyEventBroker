@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +19,71 @@ namespace Coflnet.Sky.EventBroker.Services;
 
 public class MessageServiceTests
 {
+    [Test]
+    public async Task CleanDb_DeletesOneBatchAndItsOrphanedRelations()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options;
+        await using var db = new EventDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        for (var i = 0; i <= MessageService.CleanupBatchSize; i++)
+            db.Messages.Add(CreateStoredMessage(storeIfOffline: false));
+        await db.SaveChangesAsync();
+        await db.Messages.ExecuteUpdateAsync(update => update
+            .SetProperty(message => message.Timestamp, DateTime.UtcNow.AddDays(-31)));
+
+        var service = CreateService(db, Mock.Of<IUserApi>());
+
+        Assert.That(await service.CleanDb(), Is.EqualTo(MessageService.CleanupBatchSize));
+        Assert.That(await db.Messages.CountAsync(), Is.EqualTo(1));
+        Assert.That(await db.Set<Models.Settings>().CountAsync(), Is.EqualTo(1));
+        Assert.That(await db.Set<Models.User>().CountAsync(), Is.EqualTo(1));
+        Assert.That(await service.CleanDb(), Is.EqualTo(1));
+        Assert.That(await db.Messages.CountAsync(), Is.Zero);
+        Assert.That(await db.Set<Models.Settings>().CountAsync(), Is.Zero);
+        Assert.That(await db.Set<Models.User>().CountAsync(), Is.Zero);
+    }
+
+    [Test]
+    public async Task CleanDb_PreservesOfflineAndScheduledMessages()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options;
+        await using var db = new EventDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var expired = CreateStoredMessage(storeIfOffline: false);
+        var offline = CreateStoredMessage(storeIfOffline: true);
+        var oldest = CreateStoredMessage(storeIfOffline: true);
+        var scheduled = new MessageSchedule
+        {
+            Message = CreateStoredMessage(storeIfOffline: false),
+            ScheduledTime = DateTime.UtcNow.AddDays(1),
+            UserId = "scheduled"
+        };
+        db.AddRange(expired, offline, oldest, scheduled);
+        await db.SaveChangesAsync();
+        var twoMinutesAgo = DateTime.UtcNow.AddMinutes(-2);
+        await db.Messages.Where(message => message.Id == expired.Id
+                || message.Id == offline.Id
+                || message.Id == scheduled.Message.Id)
+            .ExecuteUpdateAsync(update => update.SetProperty(
+                message => message.Timestamp, twoMinutesAgo));
+        await db.Messages.Where(message => message.Id == oldest.Id)
+            .ExecuteUpdateAsync(update => update.SetProperty(
+                message => message.Timestamp, DateTime.UtcNow.AddDays(-31)));
+
+        var service = CreateService(db, Mock.Of<IUserApi>());
+
+        Assert.That(await service.CleanDb(), Is.EqualTo(2));
+        var remaining = await db.Messages.AsNoTracking().Select(message => message.Id).ToListAsync();
+        Assert.That(remaining, Is.EquivalentTo(new[] { offline.Id, scheduled.Message.Id }));
+        Assert.That(await db.ScheduledMessages.CountAsync(), Is.EqualTo(1));
+    }
+
     [Test]
     public async Task NewPayment_NoEmailAnywhere_DoesNotThrowAndDropsSilently()
     {
@@ -167,5 +233,16 @@ public class MessageServiceTests
             doubleNotificationPreventer: null,
             pushService: null,
             userApi: userApi);
+    }
+
+    private static MessageContainer CreateStoredMessage(bool storeIfOffline)
+    {
+        return new MessageContainer
+        {
+            Message = "cleanup test",
+            Reference = Guid.NewGuid().ToString("N")[..32],
+            Setings = new Models.Settings { StoreIfOffline = storeIfOffline },
+            User = new Models.User { UserId = Guid.NewGuid().ToString("N") }
+        };
     }
 }

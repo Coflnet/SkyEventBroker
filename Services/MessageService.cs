@@ -18,6 +18,7 @@ namespace Coflnet.Sky.EventBroker.Services
 {
     public class MessageService
     {
+        internal const int CleanupBatchSize = 500;
         private static readonly Prometheus.Counter purchaseConfirmationNoEmailCount = Prometheus.Metrics.CreateCounter(
             "sky_eventbroker_purchase_confirmation_no_email",
             "How many purchase confirmations were dropped because no email address could be found for the paying user");
@@ -408,13 +409,62 @@ namespace Coflnet.Sky.EventBroker.Services
         {
             var minTime = DateTime.UtcNow - TimeSpan.FromMinutes(1);
             var oldestTime = DateTime.UtcNow - TimeSpan.FromDays(30);
-            var old = await db.Messages.Where(m => m.Timestamp < minTime && !m.Setings.StoreIfOffline || m.Timestamp < oldestTime).Include(m => m.Setings).Include(m => m.User).ToListAsync();
-            db.RemoveRange(old.Select(o => o.Setings).Where(s => s != null));
-            db.RemoveRange(old.Select(o => o.User).Where(u => u != null));
-            db.Messages.RemoveRange(old);
-            var remCount = await db.SaveChangesAsync();
-            Logger.LogInformation("Removed {remCount} message from db", remCount);
-            return remCount;
+            var candidates = await db.Messages
+                .Where(m => m.Timestamp < oldestTime
+                    && !db.ScheduledMessages.Any(s => s.Message == m))
+                .OrderBy(m => m.Timestamp)
+                .Select(m => new
+                {
+                    m.Id,
+                    SettingsId = EF.Property<int?>(m, "SetingsId"),
+                    UserId = EF.Property<int?>(m, "UserId")
+                })
+                .Take(CleanupBatchSize)
+                .ToListAsync();
+            if (candidates.Count < CleanupBatchSize)
+            {
+                candidates.AddRange(await db.Messages
+                    .Where(m => m.Timestamp >= oldestTime
+                        && m.Timestamp < minTime
+                        && !m.Setings.StoreIfOffline
+                        && !db.ScheduledMessages.Any(s => s.Message == m))
+                    .OrderBy(m => m.Timestamp)
+                    .Select(m => new
+                    {
+                        m.Id,
+                        SettingsId = EF.Property<int?>(m, "SetingsId"),
+                        UserId = EF.Property<int?>(m, "UserId")
+                    })
+                    .Take(CleanupBatchSize - candidates.Count)
+                    .ToListAsync());
+            }
+
+            if (candidates.Count == 0)
+                return 0;
+
+            var messageIds = candidates.Select(c => c.Id).ToArray();
+            var settingsIds = candidates.Where(c => c.SettingsId.HasValue)
+                .Select(c => c.SettingsId.Value).Distinct().ToArray();
+            var userIds = candidates.Where(c => c.UserId.HasValue)
+                .Select(c => c.UserId.Value).Distinct().ToArray();
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            var removed = await db.Messages
+                .Where(m => messageIds.Contains(m.Id)
+                    && (m.Timestamp < oldestTime
+                        || m.Timestamp < minTime && !m.Setings.StoreIfOffline)
+                    && !db.ScheduledMessages.Any(s => s.Message == m))
+                .ExecuteDeleteAsync();
+            await db.Set<Models.Settings>()
+                .Where(s => settingsIds.Contains(s.Id)
+                    && !db.Messages.Any(m => EF.Property<int?>(m, "SetingsId") == s.Id))
+                .ExecuteDeleteAsync();
+            await db.Set<Models.User>()
+                .Where(u => userIds.Contains(u.Id)
+                    && !db.Messages.Any(m => EF.Property<int?>(m, "UserId") == u.Id))
+                .ExecuteDeleteAsync();
+            await transaction.CommitAsync();
+            Logger.LogInformation("Removed {remCount} messages from db", removed);
+            return removed;
         }
 
         internal async Task Verified(string userId, string minecraftUuid, int verifiedCount)
