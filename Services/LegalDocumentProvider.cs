@@ -17,7 +17,9 @@ namespace Coflnet.Sky.EventBroker.Services;
 
 public sealed class LegalDocumentProvider : IHostedService
 {
-    private const string AgreementId = "skycofl";
+    private const string DefaultAgreementId = "skycofl";
+    private static readonly string[] ConfirmationAgreementIds =
+        [DefaultAgreementId, "expertMarketplace"];
     private static readonly Uri CoflnetOrigin = new("https://coflnet.com/");
     private readonly IHttpClientFactory clients;
     private readonly IConfiguration configuration;
@@ -74,13 +76,17 @@ public sealed class LegalDocumentProvider : IHostedService
     /// The documents have not finished loading yet (e.g. coflnet.com is unreachable). Callers
     /// (the purchase confirmation outbox) should simply retry later.
     /// </exception>
-    public LegalDocuments Get(string locale)
+    public LegalDocuments Get(string locale, string agreementId)
     {
         var current = localized;
         if (current == null)
             throw new InvalidOperationException(
                 "The SkyCofl legal documents are not loaded yet; try again shortly.");
-        return current[LocaleHelper.IsGerman(locale) ? "de" : "en"];
+        var key = $"{agreementId}:{(LocaleHelper.IsGerman(locale) ? "de" : "en")}";
+        return current.TryGetValue(key, out var documents)
+            ? documents
+            : throw new InvalidOperationException(
+                $"Agreement {agreementId} is not loaded for purchase confirmation.");
     }
 
     private async Task RefreshUntilLoaded(CancellationToken cancellationToken)
@@ -89,10 +95,10 @@ public sealed class LegalDocumentProvider : IHostedService
             configuration.GetValue("LEGAL_MANIFEST_RETRY_SECONDS", 300),
             1,
             3600);
-        while (localized == null && !cancellationToken.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
             await TryRefresh(cancellationToken);
-            if (localized == null && !cancellationToken.IsCancellationRequested)
+            if (!cancellationToken.IsCancellationRequested)
                 await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
         }
     }
@@ -131,76 +137,78 @@ public sealed class LegalDocumentProvider : IHostedService
         if (manifest.SchemaVersion != 1
             || manifest.AgreementTreeVersion != 1
             || !Uri.TryCreate(manifest.Source, UriKind.Absolute, out var source)
-            || (!environment.IsDevelopment() && source != CoflnetOrigin)
-            || !manifest.Agreements.TryGetValue(AgreementId, out var agreement)
-            || !IsSha256(agreement.AgreementHash)
-            || !TryUri(source, agreement.AgreementUrl, out var agreementUri))
+            || (!environment.IsDevelopment() && source != CoflnetOrigin))
             throw new InvalidOperationException(
-                "The SkyCofl agreement root is invalid.");
-
-        var descriptor = await client.GetByteArrayAsync(
-            agreementUri,
-            cancellationToken);
-        if (!Sha256(descriptor).Equals(
-                agreement.AgreementHash,
-                StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException(
-                "The SkyCofl agreement descriptor hash is invalid.");
-        var descriptorIdentity = Deserialize<AgreementDescriptor>(
-            descriptor,
-            "The SkyCofl agreement descriptor is invalid.");
-        if (descriptorIdentity.SchemaVersion != 1
-            || descriptorIdentity.Kind != "coflnet-legal-agreement-node"
-            || descriptorIdentity.Id != AgreementId
-            || descriptorIdentity.Type != "service")
-            throw new InvalidOperationException(
-                "The SkyCofl agreement descriptor identity is invalid.");
-
-        if (!manifest.Documents.TryGetValue("withdrawal", out var withdrawal)
-            || agreement.ResolvedDocuments.Count == 0
-            || agreement.ResolvedDocuments.Select(item => item.Key).Distinct().Count()
-                != agreement.ResolvedDocuments.Count)
+                "The legal manifest root is invalid.");
+        if (!manifest.Documents.TryGetValue("withdrawal", out var withdrawal))
             throw new InvalidOperationException(
                 "The legal manifest lacks confirmation documents.");
 
         var loaded = new Dictionary<string, LegalDocuments>();
-        foreach (var language in new[] { "en", "de" })
+        foreach (var agreementId in ConfirmationAgreementIds)
         {
-            var documents = new List<LegalDocument>();
-            foreach (var summary in agreement.ResolvedDocuments)
-            {
-                if (!manifest.Documents.TryGetValue(summary.Key, out var document)
-                    || document.Version != summary.Version
-                    || !string.Equals(
-                        document.AcceptanceHash,
-                        summary.AcceptanceHash,
-                        StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException(
-                        "A resolved SkyCofl document does not match the agreement root.");
-                documents.Add(await Download(
-                    client,
-                    source,
-                    summary.Key,
-                    language,
-                    document,
-                    true,
-                    cancellationToken));
-            }
-
-            loaded[language] = new(
-                AgreementId,
-                agreement.AgreementHash.ToLowerInvariant(),
-                agreement.AgreementUrl,
+            if (!manifest.Agreements.TryGetValue(agreementId, out var agreement)
+                || !IsSha256(agreement.AgreementHash)
+                || !TryUri(source, agreement.AgreementUrl, out var agreementUri)
+                || agreement.ResolvedDocuments.Count == 0
+                || agreement.ResolvedDocuments.Select(item => item.Key).Distinct().Count()
+                    != agreement.ResolvedDocuments.Count)
+                throw new InvalidOperationException(
+                    $"The {agreementId} agreement root is invalid.");
+            var descriptor = await client.GetByteArrayAsync(
+                agreementUri,
+                cancellationToken);
+            var identity = Deserialize<AgreementDescriptor>(
                 descriptor,
-                documents,
-                await Download(
-                    client,
-                    source,
-                    "withdrawal",
-                    language,
-                    withdrawal,
-                    false,
-                    cancellationToken));
+                $"The {agreementId} agreement descriptor is invalid.");
+            if (!Sha256(descriptor).Equals(
+                    agreement.AgreementHash,
+                    StringComparison.OrdinalIgnoreCase)
+                || identity.SchemaVersion != 1
+                || identity.Kind != "coflnet-legal-agreement-node"
+                || identity.Id != agreementId
+                || identity.Type != "service")
+                throw new InvalidOperationException(
+                    $"The {agreementId} agreement descriptor is invalid.");
+
+            foreach (var language in new[] { "en", "de" })
+            {
+                var documents = new List<LegalDocument>();
+                foreach (var summary in agreement.ResolvedDocuments)
+                {
+                    if (!manifest.Documents.TryGetValue(summary.Key, out var document)
+                        || document.Version != summary.Version
+                        || !string.Equals(
+                            document.AcceptanceHash,
+                            summary.AcceptanceHash,
+                            StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException(
+                            $"A resolved {agreementId} document does not match the agreement root.");
+                    documents.Add(await Download(
+                        client,
+                        source,
+                        summary.Key,
+                        language,
+                        document,
+                        true,
+                        cancellationToken));
+                }
+
+                loaded[$"{agreementId}:{language}"] = new(
+                    agreementId,
+                    agreement.AgreementHash.ToLowerInvariant(),
+                    agreement.AgreementUrl,
+                    descriptor,
+                    documents,
+                    await Download(
+                        client,
+                        source,
+                        "withdrawal",
+                        language,
+                        withdrawal,
+                        false,
+                        cancellationToken));
+            }
         }
 
         // publish atomically: readers never observe a partially populated set of locales

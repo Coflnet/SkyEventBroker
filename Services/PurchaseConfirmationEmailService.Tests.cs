@@ -70,6 +70,42 @@ public class PurchaseConfirmationEmailServiceTests
     }
 
     [Test]
+    public void BuildContent_ExpertConfigContainsOrderQuoteBeforeSupply()
+    {
+        var documents = TestDocuments("en") with
+        {
+            AgreementId = "expertMarketplace"
+        };
+        var text = PurchaseConfirmationEmailService.BuildContent(
+            new PaymentEvent
+            {
+                ProductId = "config-purchase",
+                PaymentProvider = "coflcoins",
+                PaymentProviderTransactionId = "42",
+                ConfirmationType = "service_purchase",
+                CoinAmount = 600,
+                AgreementId = "expertMarketplace",
+                GrossEurCents = 223,
+                VatEurCents = 36,
+                TaxCountry = "DE",
+                ConsumerRightsRegime = "EU",
+                VatRateBasisPoints = 1900,
+                OrderDetailsJson = "{\"config\":{\"name\":\"Expert One\",\"version\":3}}",
+                Timestamp = DateTime.UtcNow
+            },
+            "en",
+            documents);
+
+        Assert.That(text, Does.Contain("licence to the identified Expert Config version")
+            .And.Contain("managed update facility are supplied immediately")
+            .And.Contain("Recorded tax-inclusive value: EUR 2.23")
+            .And.Contain("including EUR 0.36 VAT; DE, 19%; EU consumer-rights regime")
+            .And.Contain("ORDER DETAILS")
+            .And.Contain("Expert One")
+            .And.Not.Contain("SERVICE PERIOD"));
+    }
+
+    [Test]
     public void BuildContent_MerchantOfRecordIsOnlyFulfillmentNotice()
     {
         var text = PurchaseConfirmationEmailService.BuildContent(

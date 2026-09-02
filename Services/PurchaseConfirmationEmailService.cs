@@ -9,6 +9,8 @@ using System.Threading.Tasks;
 using Coflnet.Sky.EventBroker.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Coflnet.Sky.EventBroker.Services;
 
@@ -62,7 +64,11 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
             ? parsedPort
             : 587;
         var from = config["SMTP_FROM"] ?? "noreply@coflnet.com";
-        var documents = legalDocuments.Get(locale);
+        var documents = legalDocuments.Get(
+            locale,
+            string.IsNullOrWhiteSpace(payment.AgreementId)
+                ? "skycofl"
+                : payment.AgreementId);
         ValidateAgreement(payment, documents);
 
         var text = BuildContent(payment, locale, documents);
@@ -87,11 +93,17 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
                     $"<{confirmationReference}@mail.coflnet.com>";
             message.Attachments.Add(new Attachment(
                 new MemoryStream(documents.AgreementDescriptor),
-                $"skycofl-agreement-{documents.AgreementHash}.json",
+                $"{documents.AgreementId}-agreement-{documents.AgreementHash}.json",
                 "application/json"));
             foreach (var document in documents.AgreementDocuments)
                 message.Attachments.Add(document.CreateAttachment());
             message.Attachments.Add(documents.Withdrawal.CreateAttachment());
+            if (!string.IsNullOrWhiteSpace(payment.OrderDetailsJson))
+                message.Attachments.Add(new Attachment(
+                    new MemoryStream(Encoding.UTF8.GetBytes(
+                        payment.OrderDetailsJson)),
+                    "order-details.json",
+                    "application/json"));
             await client.SendMailAsync(message);
         }
         catch (Exception exception)
@@ -160,6 +172,10 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
         var german = LocaleHelper.IsGerman(locale);
         var provider = payment.PaymentProvider ?? "";
         var merchantOfRecord = IsMerchantOfRecord(provider);
+        var expertConfig = string.Equals(
+            payment.AgreementId,
+            "expertMarketplace",
+            StringComparison.Ordinal);
         var amount = payment.PayedAmount > 0
             ? $"{payment.PayedAmount.ToString("0.00##", CultureInfo.InvariantCulture)} {payment.Currency}".Trim()
             : "";
@@ -169,7 +185,24 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
             "\n",
             documents.AgreementDocuments.Select(document =>
                 $"- {document.Title} ({document.Version}): {document.Url} [SHA-256 {document.Hash}]"));
-        var serviceDetails = IsServicePurchase(payment)
+        var taxName = payment.ConsumerRightsRegime == "US"
+            ? german ? "Transaktionssteuer" : "transaction tax"
+            : german ? "Umsatzsteuer" : "VAT";
+        var rightsRegime = string.IsNullOrWhiteSpace(
+            payment.ConsumerRightsRegime)
+            ? ""
+            : german
+                ? $"; Verbraucherrechtsregime {payment.ConsumerRightsRegime}"
+                : $"; {payment.ConsumerRightsRegime} consumer-rights regime";
+        var valuation = payment.GrossEurCents > 0
+            ? german
+                ? $"Erfasster Bruttowert: EUR {payment.GrossEurCents / 100m:0.00} (einschließlich EUR {payment.VatEurCents / 100m:0.00} {taxName}; {payment.TaxCountry}, {payment.VatRateBasisPoints / 100m:0.##} %{rightsRegime})\n"
+                : $"Recorded tax-inclusive value: EUR {payment.GrossEurCents / 100m:0.00} (including EUR {payment.VatEurCents / 100m:0.00} {taxName}; {payment.TaxCountry}, {payment.VatRateBasisPoints / 100m:0.##}%{rightsRegime})\n"
+            : "";
+        var orderDetails = string.IsNullOrWhiteSpace(payment.OrderDetailsJson)
+            ? ""
+            : $"\n\n{(german ? "BESTELLDETAILS" : "ORDER DETAILS")}\n-------------\n{JToken.Parse(payment.OrderDetailsJson).ToString(Formatting.Indented)}";
+        var serviceDetails = IsServicePurchase(payment) && !expertConfig
             ? german
                 ? $"""
 
@@ -208,7 +241,9 @@ Version: {payment.DeclarationVersion}
 
 {(merchantOfRecord
     ? $"Diese E-Mail bestätigt die Bereitstellung auf Ihrem Coflnet-Konto. {provider} war der beim Checkout ausgewiesene Verkäufer (Merchant of Record); dessen Beleg und Checkout-Bedingungen enthalten die verbindlichen Bestell-, Zahlungs- und Widerrufsangaben. Die beigefügten Coflnet-Dokumente betreffen nur das gesonderte SkyCofl-Nutzungsverhältnis und ändern den Verkauf durch {provider} nicht."
-    : "Diese E-Mail bestätigt die Zahlung und Bereitstellung Ihres Vertrags mit der Coflnet GmbH.")}
+    : expertConfig
+        ? "Diese E-Mail bestätigt Zahlung und Bestellung bei der Coflnet GmbH. Die Lizenz an der bezeichneten Experten-Konfigurationsfassung und die verwaltete Aktualisierungsfunktion werden unmittelbar nach Zustellung dieser Bestätigung bereitgestellt."
+        : "Diese E-Mail bestätigt die Zahlung und Bereitstellung Ihres Vertrags mit der Coflnet GmbH.")}
 
 BESTELLUNG
 ----------
@@ -219,8 +254,9 @@ Datum/Uhrzeit: {timestamp}
 ZAHLUNG
 -------
 Zahlungsanbieter: {provider}
-{(amount.Length == 0 ? "" : $"Betrag: {amount}\n")}{(payment.CoinAmount.HasValue ? $"CoflCoins: {payment.CoinAmount.Value.ToString("0.##", CultureInfo.InvariantCulture)}\n" : "")}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Zahlungsart: {payment.PaymentMethod}\n")}
+{(amount.Length == 0 ? "" : $"Betrag: {amount}\n")}{(payment.CoinAmount.HasValue ? $"CoflCoins: {payment.CoinAmount.Value.ToString("0.##", CultureInfo.InvariantCulture)}\n" : "")}{valuation}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Zahlungsart: {payment.PaymentMethod}\n")}
 {serviceDetails}
+{orderDetails}
 
 VEREINBARUNG
 -------------
@@ -251,7 +287,9 @@ E-Mail: support@coflnet.com
 
 {(merchantOfRecord
     ? $"This email confirms fulfillment on your Coflnet account. {provider} was the seller (merchant of record) identified at checkout; its receipt and checkout terms contain the authoritative order, payment and withdrawal information. The attached Coflnet documents cover only the separate SkyCofl usage relationship and do not alter the sale by {provider}."
-    : "This email confirms payment and fulfillment of your contract with Coflnet GmbH.")}
+    : expertConfig
+        ? "This email confirms payment and your order with Coflnet GmbH. The licence to the identified Expert Config version and the managed update facility are supplied immediately after delivery of this confirmation."
+        : "This email confirms payment and fulfillment of your contract with Coflnet GmbH.")}
 
 ORDER
 -----
@@ -262,8 +300,9 @@ Date/time: {timestamp}
 PAYMENT
 -------
 Payment provider: {provider}
-{(amount.Length == 0 ? "" : $"Amount: {amount}\n")}{(payment.CoinAmount.HasValue ? $"CoflCoins: {payment.CoinAmount.Value.ToString("0.##", CultureInfo.InvariantCulture)}\n" : "")}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Payment method: {payment.PaymentMethod}\n")}
+{(amount.Length == 0 ? "" : $"Amount: {amount}\n")}{(payment.CoinAmount.HasValue ? $"CoflCoins: {payment.CoinAmount.Value.ToString("0.##", CultureInfo.InvariantCulture)}\n" : "")}{valuation}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Payment method: {payment.PaymentMethod}\n")}
 {serviceDetails}
+{orderDetails}
 
 AGREEMENT
 ---------
