@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Coflnet.Sky.Commands.Shared;
 using Coflnet.Sky.EventBroker.Models;
 using Coflnet.Sky.Indexer.Client.Api;
+using Coflnet.Sky.Indexer.Client.Client;
 using Coflnet.Sky.Indexer.Client.Model;
 using Coflnet.Sky.Settings.Client.Api;
 using Microsoft.Data.Sqlite;
@@ -85,13 +86,14 @@ public class MessageServiceTests
     }
 
     [Test]
-    public async Task NewPayment_NoEmailAnywhere_DoesNotThrowAndDropsSilently()
+    public async Task NewPayment_NoEmailAnywhere_EnqueuesForLaterRetry()
     {
-        // Regression test for the poison-loop bug: NewPayment used to throw
-        // InvalidOperationException when no email could be found anywhere. That exception
-        // propagates into Kafka.KafkaConsumer.Consume, which re-enters the consume loop with no
-        // delay and no offset commit, permanently blocking the partition. It must instead log and
-        // drop the confirmation.
+        // Regression test: NewPayment used to drop the purchase confirmation entirely (and log
+        // an error) when no email could be found anywhere. But delivery of the purchased good
+        // matters more than the receipt email, and FinishPurchase is gated on a
+        // PurchaseConfirmationDelivery row existing at all - dropping it meant the buyer was
+        // charged and never supplied. The row must always be enqueued, with a null Recipient so
+        // PurchaseConfirmationDeliveryService resolves and retries it later.
         await using var connection = new SqliteConnection("Filename=:memory:");
         await connection.OpenAsync();
         var options = new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options;
@@ -112,7 +114,46 @@ public class MessageServiceTests
         };
 
         Assert.DoesNotThrowAsync(() => service.NewPayment(payment));
-        Assert.That(await db.PurchaseConfirmationDeliveries.CountAsync(), Is.EqualTo(0));
+        var delivery = await db.PurchaseConfirmationDeliveries.SingleAsync();
+        Assert.That(delivery.Recipient, Is.Null);
+    }
+
+    [Test]
+    public async Task NewPayment_IndexerThrowsUserNotFound_DoesNotThrowAndStillEnqueues()
+    {
+        // Regression test for the actual production incident: the indexer does not return null
+        // for an unknown user, it throws Coflnet.Sky.Indexer.Client.Client.ApiException
+        // ("user_not_found") - a mode the pre-existing NoEmailAnywhere test above never exercised
+        // because it mocked a null *return*. That unguarded throw happened one line before the
+        // graceful "no email" handling could ever run, propagated out of NewPayment into the
+        // un-caught payments Kafka consumer, and poisoned the partition (redelivered every ~3.2s
+        // forever, since EnableAutoCommit=false and the offset only commits after a successful
+        // batch) - which is exactly how one paid Expert Config purchase was charged and never
+        // supplied. This is why it shipped: the happy-path-ish "return null" mock looked like
+        // adequate coverage for "user has no email" but never touched the throwing code path.
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options;
+        await using var db = new EventDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var userApi = new Mock<IUserApi>();
+        userApi.Setup(api => api.UserEmailGetAsync(
+                It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ApiException(
+                404, "Error calling UserEmailGet: User not found (, user_not_found)"));
+        var service = CreateService(db, userApi.Object);
+
+        var payment = new PaymentEvent
+        {
+            UserId = "42",
+            PaymentProvider = "coingate",
+            PaymentProviderTransactionId = "pi_indexer_throws"
+        };
+
+        Assert.DoesNotThrowAsync(() => service.NewPayment(payment));
+        var delivery = await db.PurchaseConfirmationDeliveries.SingleAsync();
+        Assert.That(delivery.Recipient, Is.Null);
     }
 
     [Test]

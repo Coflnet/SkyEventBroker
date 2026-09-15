@@ -349,22 +349,14 @@ namespace Coflnet.Sky.EventBroker.Services
             // indexer when it doesn't, to avoid a needless round-trip
             var email = payment.Email;
             if (string.IsNullOrWhiteSpace(email))
-            {
-                var user = await userApi.UserEmailGetAsync(payment.UserId);
-                email = user?.Email;
-            }
-            if (string.IsNullOrWhiteSpace(email))
-            {
-                // this is a data condition (the account has no email on file), not something
-                // retrying the same message will fix - throwing here would poison the Kafka
-                // consumer loop (see Kafka.KafkaConsumer.Consume), so log and drop instead
-                purchaseConfirmationNoEmailCount.Inc();
-                Logger.LogError(
-                    "No account email found for paid transaction {reference} (provider {provider}); dropping purchase confirmation",
-                    confirmationReference,
-                    payment.PaymentProvider);
-                return;
-            }
+                email = await TryGetIndexerEmail(
+                    payment.UserId, confirmationReference, payment.PaymentProvider);
+            // Delivery of the purchased good must never depend on resolving an email here.
+            // Whether the lookup above failed, threw, or simply returned nothing, the row below
+            // is always enqueued (Recipient may be null). PurchaseConfirmationDeliveryService
+            // re-resolves the recipient at send time and retries through its own
+            // backoff/park-after-MaxAttempts machinery, so a missing address only delays the
+            // receipt email - it can no longer drop the confirmation entirely.
             var accountInfo = await settingsService.GetCurrentValue<AccountInfo>(
                 payment.UserId,
                 "accountInfo",
@@ -390,6 +382,48 @@ namespace Coflnet.Sky.EventBroker.Services
                 if (!await db.PurchaseConfirmationDeliveries.AnyAsync(
                         delivery => delivery.Reference == confirmationReference))
                     throw;
+            }
+        }
+
+        /// <summary>
+        /// Resolves the account email via the indexer for the payment paths that don't already
+        /// carry one on the event. Never throws: an unknown user surfaces from the indexer as
+        /// <see cref="Coflnet.Sky.Indexer.Client.Client.ApiException"/> ("user_not_found"), and
+        /// that exception used to propagate out of <see cref="NewPayment"/>, into the un-caught
+        /// payments Kafka consumer, and poison the whole partition (see
+        /// <see cref="BaseBackgroundService"/>). A missing or erroring email is a data condition,
+        /// not something retrying the same message would fix, so this logs and returns null
+        /// instead - the caller always enqueues the confirmation regardless.
+        /// </summary>
+        private async Task<string> TryGetIndexerEmail(
+            string userId,
+            string confirmationReference,
+            string provider)
+        {
+            try
+            {
+                var user = await userApi.UserEmailGetAsync(userId);
+                return user?.Email;
+            }
+            catch (Coflnet.Sky.Indexer.Client.Client.ApiException exception)
+            {
+                purchaseConfirmationNoEmailCount.Inc();
+                Logger.LogWarning(
+                    exception,
+                    "Indexer lookup failed for paid transaction {reference} (provider {provider}); the confirmation will still be enqueued and the recipient resolved later",
+                    confirmationReference,
+                    provider);
+                return null;
+            }
+            catch (Exception exception)
+            {
+                purchaseConfirmationNoEmailCount.Inc();
+                Logger.LogWarning(
+                    exception,
+                    "Unexpected error resolving account email for paid transaction {reference} (provider {provider}); the confirmation will still be enqueued and the recipient resolved later",
+                    confirmationReference,
+                    provider);
+                return null;
             }
         }
 

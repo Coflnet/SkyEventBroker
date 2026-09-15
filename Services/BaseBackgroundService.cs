@@ -27,6 +27,9 @@ namespace Coflnet.Sky.EventBroker.Services
         private IConfiguration config;
         private ILogger<BaseBackgroundService> logger;
         private Prometheus.Counter cleanupCount = Prometheus.Metrics.CreateCounter("sky_eventbroker_cleanup", "How many events were cleaned up");
+        private Prometheus.Counter paymentConfirmationDroppedCount = Prometheus.Metrics.CreateCounter(
+            "sky_eventbroker_payment_confirmation_dropped_total",
+            "How many payment events could not be turned into a purchase confirmation and were dropped to keep the partition moving");
 
         public BaseBackgroundService(
             IServiceScopeFactory scopeFactory, IConfiguration config, ILogger<BaseBackgroundService> logger)
@@ -67,8 +70,28 @@ namespace Coflnet.Sky.EventBroker.Services
             }, stoppingToken, "sky-eventbroker", AutoOffsetReset.Earliest, new TransactionDeserializer());
             var paymentCons = Kafka.KafkaConsumer.Consume(config, config["TOPICS:PAYMENTS"], async payment =>
             {
-                using var scope = scopeFactory.CreateScope();
-                await GetService(scope).NewPayment(payment);
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    await GetService(scope).NewPayment(payment);
+                }
+                catch (Exception e)
+                {
+                    // Deliberately swallowed, unlike the other consumers in this file: the
+                    // Payments-side outbox is the durable source of truth for this event, so
+                    // nothing is lost by dropping it here, while re-throwing would poison this
+                    // partition (no delay, no commit - see Kafka.KafkaConsumer.Consume) and halt
+                    // purchase-confirmation delivery for EVERY paying customer because of one
+                    // unprocessable message. Losing a single confirmation row is far cheaper than
+                    // blocking the whole payments stream.
+                    logger.LogCritical(
+                        e,
+                        "Failed to record purchase confirmation for payment {provider}/{transactionId} (user {userId}); dropping it to keep the partition moving",
+                        payment?.PaymentProvider,
+                        payment?.PaymentProviderTransactionId,
+                        payment?.UserId);
+                    paymentConfirmationDroppedCount.Inc();
+                }
             }, stoppingToken, "sky-eventbroker-payment-confirmations", AutoOffsetReset.Earliest, new PaymentDeserializer());
             var verfify = Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config, config["TOPICS:VERIFIED"], async batch =>
             {

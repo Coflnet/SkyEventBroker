@@ -1,10 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Coflnet.Sky.EventBroker.Models;
+using Coflnet.Sky.Indexer.Client.Api;
+using Coflnet.Sky.Indexer.Client.Client;
+using Coflnet.Sky.Indexer.Client.Model;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Newtonsoft.Json;
 using NUnit.Framework;
 
@@ -46,6 +51,7 @@ public class PurchaseConfirmationDeliveryServiceTests
         var service = new PurchaseConfirmationDeliveryService(
             db,
             sender,
+            Mock.Of<IUserApi>(),
             NullLogger<PurchaseConfirmationDeliveryService>.Instance);
 
         Assert.That(await service.ProcessOneAsync(), Is.True);
@@ -112,6 +118,7 @@ public class PurchaseConfirmationDeliveryServiceTests
         var service = new PurchaseConfirmationDeliveryService(
             db,
             sender,
+            Mock.Of<IUserApi>(),
             NullLogger<PurchaseConfirmationDeliveryService>.Instance);
 
         Assert.That(await service.ProcessOneAsync(), Is.True);
@@ -158,6 +165,7 @@ public class PurchaseConfirmationDeliveryServiceTests
         var service = new PurchaseConfirmationDeliveryService(
             db,
             sender,
+            Mock.Of<IUserApi>(),
             NullLogger<PurchaseConfirmationDeliveryService>.Instance);
 
         for (var attempt = 0; attempt < 10; attempt++)
@@ -183,6 +191,112 @@ public class PurchaseConfirmationDeliveryServiceTests
     }
 
     [Test]
+    public async Task ProcessOne_RowHasNoRecipient_ResolvesViaIndexerAndSendsToIt()
+    {
+        // NewPayment now enqueues rows with a null Recipient whenever the indexer lookup could
+        // not be resolved inline, so delivery is never gated on the email address at enqueue
+        // time. This is that address being resolved later, once the indexer actually has it.
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<EventDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new EventDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var payment = new PaymentEvent
+        {
+            UserId = "42",
+            ProductId = "7",
+            PaymentProvider = "stripe",
+            PaymentProviderTransactionId = "pi_resolve_later",
+            Timestamp = DateTime.UtcNow
+        };
+        db.PurchaseConfirmationDeliveries.Add(
+            new PurchaseConfirmationDelivery
+            {
+                Reference = "mailRESOLVE000000000000000001",
+                Recipient = null,
+                Locale = "en-US",
+                Payload = JsonConvert.SerializeObject(payment),
+                CreatedAt = DateTime.UtcNow,
+                NextAttemptAt = DateTime.UtcNow
+            });
+        await db.SaveChangesAsync();
+
+        var userApi = new Mock<IUserApi>();
+        userApi.Setup(api => api.UserEmailGetAsync("42", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleUser { Email = "resolved@example.test" });
+        var sender = new RecordingSender();
+        var service = new PurchaseConfirmationDeliveryService(
+            db,
+            sender,
+            userApi.Object,
+            NullLogger<PurchaseConfirmationDeliveryService>.Instance);
+
+        Assert.That(await service.ProcessOneAsync(), Is.True);
+
+        Assert.That(sender.Recipients, Is.EqualTo(new[] { "resolved@example.test" }));
+        db.ChangeTracker.Clear();
+        var sent = await db.PurchaseConfirmationDeliveries.AsNoTracking().SingleAsync();
+        Assert.That(sent.SentAt, Is.Not.Null);
+    }
+
+    [Test]
+    public async Task ProcessOne_RowHasNoRecipientAndIndexerStillHasNone_SchedulesRetryInsteadOfSendingOrParking()
+    {
+        // Mirrors the production failure: the indexer throws ApiException("user_not_found") for
+        // an account with no email on file. Nothing must be sent, and this is a transient/data
+        // condition like any other send failure - it goes through the normal backoff, not an
+        // immediate park.
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<EventDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var db = new EventDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+        var payment = new PaymentEvent
+        {
+            UserId = "42",
+            ProductId = "7",
+            PaymentProvider = "stripe",
+            PaymentProviderTransactionId = "pi_still_no_email",
+            Timestamp = DateTime.UtcNow
+        };
+        db.PurchaseConfirmationDeliveries.Add(
+            new PurchaseConfirmationDelivery
+            {
+                Reference = "mailSTILLNONE00000000000001",
+                Recipient = null,
+                Locale = "en-US",
+                Payload = JsonConvert.SerializeObject(payment),
+                CreatedAt = DateTime.UtcNow,
+                NextAttemptAt = DateTime.UtcNow
+            });
+        await db.SaveChangesAsync();
+
+        var userApi = new Mock<IUserApi>();
+        userApi.Setup(api => api.UserEmailGetAsync("42", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ApiException(404, "Error calling UserEmailGet: User not found (, user_not_found)"));
+        var sender = new RecordingSender();
+        var service = new PurchaseConfirmationDeliveryService(
+            db,
+            sender,
+            userApi.Object,
+            NullLogger<PurchaseConfirmationDeliveryService>.Instance);
+
+        Assert.That(await service.ProcessOneAsync(), Is.True);
+
+        Assert.That(sender.Recipients, Is.Empty);
+        db.ChangeTracker.Clear();
+        var row = await db.PurchaseConfirmationDeliveries.AsNoTracking().SingleAsync();
+        Assert.That(row.SentAt, Is.Null);
+        Assert.That(row.FailedAt, Is.Null);
+        Assert.That(row.Attempts, Is.EqualTo(1));
+        Assert.That(row.NextAttemptAt, Is.GreaterThan(DateTime.UtcNow));
+    }
+
+    [Test]
     public void PurchaseReference_NormalizesProviderAndType()
     {
         Assert.That(
@@ -203,6 +317,7 @@ public class PurchaseConfirmationDeliveryServiceTests
         public bool AlwaysFail { get; set; }
         public TimeSpan? DelayBeforeFail { get; set; }
         public List<string> Deliveries { get; } = [];
+        public List<string> Recipients { get; } = [];
 
         public async Task SendAsync(
             string toEmail,
@@ -219,6 +334,7 @@ public class PurchaseConfirmationDeliveryServiceTests
             }
 
             Deliveries.Add(confirmationReference);
+            Recipients.Add(toEmail);
         }
     }
 }

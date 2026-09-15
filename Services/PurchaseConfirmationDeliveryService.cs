@@ -30,15 +30,18 @@ public sealed class PurchaseConfirmationDeliveryService
 
     private readonly EventDbContext db;
     private readonly IPurchaseConfirmationEmailSender emailService;
+    private readonly Coflnet.Sky.Indexer.Client.Api.IUserApi userApi;
     private readonly ILogger<PurchaseConfirmationDeliveryService> logger;
 
     public PurchaseConfirmationDeliveryService(
         EventDbContext db,
         IPurchaseConfirmationEmailSender emailService,
+        Coflnet.Sky.Indexer.Client.Api.IUserApi userApi,
         ILogger<PurchaseConfirmationDeliveryService> logger)
     {
         this.db = db;
         this.emailService = emailService;
+        this.userApi = userApi;
         this.logger = logger;
     }
 
@@ -82,8 +85,32 @@ public sealed class PurchaseConfirmationDeliveryService
             var payment = JsonConvert.DeserializeObject<PaymentEvent>(row.Payload)
                 ?? throw new InvalidOperationException(
                     "Purchase confirmation payload is empty");
+            // NewPayment enqueues rows with a null Recipient whenever the indexer lookup could
+            // not be completed inline (see MessageService.TryGetIndexerEmail) so that the
+            // purchase itself is never gated on the email address. Resolve it here instead; if
+            // that still fails, throwing below routes through the existing retry/backoff/park
+            // machinery rather than a parallel one.
+            var recipient = row.Recipient;
+            if (string.IsNullOrWhiteSpace(recipient))
+            {
+                string resolvedEmail;
+                try
+                {
+                    resolvedEmail = (await userApi.UserEmailGetAsync(payment.UserId))?.Email;
+                }
+                catch (Exception exception)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not resolve a recipient email for purchase confirmation {row.Reference} via the indexer",
+                        exception);
+                }
+                if (string.IsNullOrWhiteSpace(resolvedEmail))
+                    throw new InvalidOperationException(
+                        $"No account email found for purchase confirmation {row.Reference}");
+                recipient = resolvedEmail;
+            }
             await emailService.SendAsync(
-                row.Recipient,
+                recipient,
                 row.Locale,
                 payment,
                 row.Reference);
