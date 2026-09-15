@@ -205,6 +205,45 @@ public class MessageServiceTests
         Assert.That(await db.PurchaseConfirmationDeliveries.CountAsync(), Is.EqualTo(1));
     }
 
+    [Test]
+    public async Task DurableDeliveryFailureDoesNotPoisonDuplicateSuppression()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        await using var db = new EventDbContext(new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var service = CreateService(db, Mock.Of<IUserApi>());
+        var message = CreateStoredMessage(storeIfOffline: true);
+        message.Reference = "bazaar-retry-test";
+        // The test service has no Redis connection: both attempts must reach delivery and fail,
+        // rather than acknowledging the second attempt as an already-delivered notification.
+        Assert.ThrowsAsync<NullReferenceException>(() => service.AddMessage(message, retryFailures: true));
+        Assert.ThrowsAsync<NullReferenceException>(() => service.AddMessage(message, retryFailures: true));
+    }
+
+    [TestCase(HttpStatusCode.TooManyRequests, PushResult.TemporaryFailure)]
+    [TestCase(HttpStatusCode.ServiceUnavailable, PushResult.TemporaryFailure)]
+    [TestCase(HttpStatusCode.NotFound, PushResult.InvalidToken)]
+    [TestCase(HttpStatusCode.NoContent, PushResult.Sent)]
+    public async Task WebhookFailureDistinguishesRetryFromInvalidTarget(HttpStatusCode status, PushResult expected)
+    {
+        using var port = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        port.Start();
+        var address = $"http://127.0.0.1:{((IPEndPoint)port.LocalEndpoint).Port}/";
+        port.Stop();
+        using var server = new HttpListener();
+        server.Prefixes.Add(address);
+        server.Start();
+        var service = CreateService(null, Mock.Of<IUserApi>());
+        var delivery = service.SendToTarget(new MessageContainer { Message = "Bazaar fill", Link = address },
+            new NotificationTarget { Type = NotificationTarget.TargetType.DiscordWebhook, Target = address });
+        var request = await server.GetContextAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        request.Response.StatusCode = (int)status;
+        request.Response.ContentLength64 = 0;
+        request.Response.Close();
+        Assert.That(await delivery, Is.EqualTo(expected));
+    }
+
     private static MessageService CreateService(EventDbContext db, IUserApi userApi)
     {
         // GetCurrentValue<AccountInfo> only needs a working ISettingsApi that resolves quickly;
@@ -230,7 +269,7 @@ public class MessageServiceTests
             settingsService: settingsService,
             config: null,
             premiumService: null,
-            doubleNotificationPreventer: null,
+            doubleNotificationPreventer: new DoubleNotificationPreventer(),
             pushService: null,
             userApi: userApi);
     }

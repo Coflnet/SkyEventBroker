@@ -76,7 +76,12 @@ namespace Coflnet.Sky.EventBroker
             services.AddSingleton<ScheduleService>();
             services.AddHostedService(s => s.GetRequiredService<ScheduleService>());
             services.AddHostedService<BaseBackgroundService>();
+            services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(sp => sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>());
+            services.AddKeyedSingleton<StackExchange.Redis.IConnectionMultiplexer>("bazaar", (sp, key) =>
+                sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>());
+            services.AddHostedService<BazaarFillNotifications>();
             services.AddJaeger(Configuration);
+            services.AddOpenTelemetry().WithTracing(b => b.AddSource(BazaarFillNotifications.SourceName));
             services.AddScoped<MessageService>();
             services.AddSingleton<AsyncUserLockService>();
             services.AddSingleton<Coflnet.Sky.Indexer.Client.Api.IUserApi>(

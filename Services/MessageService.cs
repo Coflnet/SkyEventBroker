@@ -52,7 +52,8 @@ namespace Coflnet.Sky.EventBroker.Services
             this.userApi = userApi;
         }
 
-        public async Task<MessageContainer> AddMessage(MessageContainer message)
+        // Durable consumers deduplicate at enqueue time and must be able to retry failed delivery.
+        public async Task<MessageContainer> AddMessage(MessageContainer message, bool retryFailures = false)
         {
             if (message.Timestamp == default || message.Timestamp < DateTime.Now - TimeSpan.FromDays(1))
             {
@@ -60,7 +61,7 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             if (string.IsNullOrEmpty(message.Reference))
                 message.Reference = message.Message.GetHashCode().ToString();
-            if (!doubleNotificationPreventer.HasNeverBeenSeen(message.User.UserId, message.Reference))
+            if (!retryFailures && !doubleNotificationPreventer.HasNeverBeenSeen(message.User.UserId, message.Reference))
             {
                 Logger.LogInformation("Message already sent for {userId} (reference {reference})", message.User.UserId, message.Reference);
                 return message;
@@ -72,25 +73,25 @@ namespace Coflnet.Sky.EventBroker.Services
             {
                 receivedCount = await SendInGame(message);
             }
-            Logger.LogInformation("published for {user} source {source} count {count}, subscriptions {subcount}", message.User.UserId, message.SourceType, receivedCount, subs.Count);
+            Logger.LogInformation("published for {user} source {source} count {count}, subscriptions {subcount}; reference {Reference}", message.User.UserId, message.SourceType, receivedCount, subs.Count, message.Reference);
             foreach (var sub in subs)
             {
                 if (!IsAllowed(message, sub))
                 {
-                    Logger.LogInformation("not allowed for {user} source {source} sub {sub}", message.User.UserId, message.SourceType, sub.Id);
+                    Logger.LogInformation("not allowed for {user} source {source} sub {sub}; reference {Reference}", message.User.UserId, message.SourceType, sub.Id, message.Reference);
                     continue;
                 }
                 foreach (var target in sub.Targets)
                 {
                     if (target.IsDisabled)
                     {
-                        Logger.LogInformation("target {targetId} ({targetType}) is disabled, skipping", target.Target.Id, target.Target.Type);
+                        Logger.LogInformation("target {targetId} ({targetType}) is disabled, skipping; reference {Reference}", target.Target.Id, target.Target.Type, message.Reference);
                         continue;
                     }
                     if (target.Target.When == NotificationTarget.NotifyWhen.NEVER)
                     {
                         // "never notify" targets (e.g. the in-game disable marker) only signal intent, they are never sent to
-                        Logger.LogInformation("target {targetId} ({targetType}) is set to never notify, skipping", target.Target.Id, target.Target.Type);
+                        Logger.LogInformation("target {targetId} ({targetType}) is set to never notify, skipping; reference {Reference}", target.Target.Id, target.Target.Type, message.Reference);
                         continue;
                     }
                     try
@@ -101,17 +102,23 @@ namespace Coflnet.Sky.EventBroker.Services
                             target.IsDisabled = true;
                             db.Update(target);
                             await db.SaveChangesAsync();
-                            Logger.LogInformation("disabled target {targetId} ({targetType}) for user {userId} as it was rejected", target.Target.Id, target.Target.Type, message.User.UserId);
+                            Logger.LogInformation("disabled target {targetId} ({targetType}) for user {userId} as it was rejected; reference {Reference}", target.Target.Id, target.Target.Type, message.User.UserId, message.Reference);
                         }
                         else if (result == PushResult.Sent)
-                            Logger.LogInformation("sent message to target {targetId} ({targetType}) from user {userId}", target.Target.Id, target.Target.Type, message.User.UserId);
+                            Logger.LogInformation("sent message to target {targetId} ({targetType}) from user {userId}; reference {Reference}", target.Target.Id, target.Target.Type, message.User.UserId, message.Reference);
                         else
-                            // temporary failures and missing config must not disable the target, it would need manual reactivation
-                            Logger.LogWarning("could not send message to target {targetId} ({targetType}) from user {userId} ({result})", target.Target.Id, target.Target.Type, message.User.UserId, result);
+                        {
+                            // Temporary failures must not disable the target.
+                            Logger.LogWarning("could not send message to target {targetId} ({targetType}) from user {userId} ({result}); reference {Reference}", target.Target.Id, target.Target.Type, message.User.UserId, result, message.Reference);
+                            if (retryFailures)
+                                throw new InvalidOperationException("Notification target temporarily unavailable");
+                        }
                     }
                     catch (Exception e)
                     {
-                        Logger.LogError("Error {errorType} while sending message to target {targetId} ({targetType}) from user {userId}", e.GetType().Name, target.Target.Id, target.Target.Type, message.User.UserId);
+                        Logger.LogError("Error {errorType} while sending message to target {targetId} ({targetType}) from user {userId}; reference {Reference}", e.GetType().Name, target.Target.Id, target.Target.Type, message.User.UserId, message.Reference);
+                        if (retryFailures)
+                            throw;
                     }
                 }
             }
@@ -124,10 +131,13 @@ namespace Coflnet.Sky.EventBroker.Services
             {
                 db.Messages.Add(message);
                 await db.SaveChangesAsync();
+                Logger.LogDebug("Stored offline message {Reference} for {UserId}", message.Reference, message.User.UserId);
             }
             catch (Exception e)
             {
                 Logger.LogError("Error {errorType} while saving message for user {userId} (reference {reference})", e.GetType().Name, message.User.UserId, message.Reference);
+                if (retryFailures)
+                    throw;
             }
 
             return message;
@@ -171,7 +181,7 @@ namespace Coflnet.Sky.EventBroker.Services
         {
             if (target.Type == NotificationTarget.TargetType.DiscordWebhook)
             {
-                return await SendWebhook(message, target) ? PushResult.Sent : PushResult.InvalidToken;
+                return await SendWebhook(message, target);
             }
             if (target.Type == NotificationTarget.TargetType.FIREBASE)
             {
@@ -206,14 +216,14 @@ namespace Coflnet.Sky.EventBroker.Services
             return result;
         }
 
-        private async Task<bool> SendWebhook(MessageContainer message, NotificationTarget target)
+        private async Task<PushResult> SendWebhook(MessageContainer message, NotificationTarget target)
         {
             var url = target.Target;
             if (!url.Contains("wait="))
                 url += "?wait=true";
             if (url == "https://discord.gg/api")
-                return false;
-            var client = new System.Net.Http.HttpClient();
+                return PushResult.InvalidToken;
+            using var client = new System.Net.Http.HttpClient();
             if (!(Uri.TryCreate(message.Link, UriKind.Absolute, out var uriResult) && uriResult.Scheme == Uri.UriSchemeHttp))
                 Logger.LogWarning("Notification contained an invalid link; using the default");
             message.Link ??= "https://sky.coflnet.com";
@@ -229,9 +239,13 @@ namespace Coflnet.Sky.EventBroker.Services
                     avatar_url = "https://sky.coflnet.com/logo192.png",
                     } }
             });
-            var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
-            Logger.LogInformation("sent to webhook target {targetId} with status {status}", target.Id, response.StatusCode);
-            return response.StatusCode <= System.Net.HttpStatusCode.NoContent;
+            using var response = await client.PostAsync(url, new System.Net.Http.StringContent(body, Encoding.UTF8, "application/json"));
+            Logger.LogInformation("sent to webhook target {targetId} with status {status}; reference {Reference}", target.Id, response.StatusCode, message.Reference);
+            if (response.IsSuccessStatusCode)
+                return PushResult.Sent;
+            return response.StatusCode is System.Net.HttpStatusCode.Unauthorized
+                or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.NotFound
+                ? PushResult.InvalidToken : PushResult.TemporaryFailure;
         }
 
         internal Task Received(string refence)
