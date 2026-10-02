@@ -80,12 +80,14 @@ public sealed class LegalDocumentProvider : IHostedService
     {
         var current = localized;
         if (current == null)
-            throw new InvalidOperationException(
+            throw new PurchaseConfirmationException(
+                PurchaseConfirmationFailure.DocumentsNotLoaded,
                 "The SkyCofl legal documents are not loaded yet; try again shortly.");
         var key = $"{agreementId}:{(LocaleHelper.IsGerman(locale) ? "de" : "en")}";
         return current.TryGetValue(key, out var documents)
             ? documents
-            : throw new InvalidOperationException(
+            : throw new PurchaseConfirmationException(
+                PurchaseConfirmationFailure.DocumentsNotLoaded,
                 $"Agreement {agreementId} is not loaded for purchase confirmation.");
     }
 

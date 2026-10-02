@@ -200,7 +200,7 @@ public class PurchaseConfirmationEmailServiceTests
     {
         var documents = TestDocuments("en");
 
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<PurchaseConfirmationException>(() =>
             PurchaseConfirmationEmailService.ValidateAgreement(
                 new PaymentEvent
                 {
@@ -215,7 +215,7 @@ public class PurchaseConfirmationEmailServiceTests
     {
         var documents = TestDocuments("en");
 
-        Assert.Throws<InvalidOperationException>(() => PurchaseConfirmationEmailService.ValidateAgreement(
+        Assert.Throws<PurchaseConfirmationException>(() => PurchaseConfirmationEmailService.ValidateAgreement(
             new PaymentEvent { TermsAcceptanceHash = "not-the-recorded-hash" },
             documents));
     }
@@ -235,7 +235,7 @@ public class PurchaseConfirmationEmailServiceTests
     {
         var documents = TestDocuments("en");
 
-        Assert.Throws<InvalidOperationException>(() => PurchaseConfirmationEmailService.ValidateAgreement(
+        Assert.Throws<PurchaseConfirmationException>(() => PurchaseConfirmationEmailService.ValidateAgreement(
             new PaymentEvent { WithdrawalVersion = "not-the-loaded-version" },
             documents));
     }
