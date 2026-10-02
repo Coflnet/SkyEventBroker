@@ -57,18 +57,20 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
         if (string.IsNullOrWhiteSpace(host)
             || string.IsNullOrWhiteSpace(user)
             || string.IsNullOrWhiteSpace(password))
-            throw new InvalidOperationException(
+            throw new PurchaseConfirmationException(
+                PurchaseConfirmationFailure.SmtpNotConfigured,
                 "SMTP is not configured (SMTP_HOST/SMTP_USER/SMTP_PASSWORD missing)");
 
         var port = int.TryParse(config["SMTP_PORT"], out var parsedPort)
             ? parsedPort
             : 587;
         var from = config["SMTP_FROM"] ?? "noreply@coflnet.com";
-        var documents = legalDocuments.Get(
+        var documents = await legalDocuments.GetForPurchase(
             locale,
             string.IsNullOrWhiteSpace(payment.AgreementId)
                 ? "skycofl"
-                : payment.AgreementId);
+                : payment.AgreementId,
+            payment);
         ValidateAgreement(payment, documents);
 
         var text = BuildContent(payment, locale, documents);
@@ -133,7 +135,8 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
                     payment.AgreementHash,
                     documents.AgreementHash,
                     StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(
+                throw new PurchaseConfirmationException(
+                    PurchaseConfirmationFailure.AgreementMismatch,
                     "The purchase's accepted agreement root does not match the loaded SkyCofl agreement.");
         }
         else if (!string.IsNullOrWhiteSpace(payment.TermsAcceptanceHash))
@@ -145,7 +148,8 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
                     payment.TermsAcceptanceHash,
                     terms.AcceptanceHash,
                     StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(
+                throw new PurchaseConfirmationException(
+                    PurchaseConfirmationFailure.TermsMismatch,
                     "The purchase's accepted terms hash does not match the loaded SkyCofl terms document.");
         }
         if (!string.IsNullOrWhiteSpace(payment.WithdrawalVersion)
@@ -153,14 +157,16 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
                 payment.WithdrawalVersion,
                 documents.Withdrawal.Version,
                 StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(
+                throw new PurchaseConfirmationException(
+                    PurchaseConfirmationFailure.WithdrawalMismatch,
                     "The purchase's withdrawal instructions version does not match the loaded SkyCofl withdrawal document.");
         if (!string.IsNullOrWhiteSpace(payment.WithdrawalSha256)
             && !string.Equals(
                 payment.WithdrawalSha256,
                 documents.Withdrawal.Hash,
                 StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException(
+            throw new PurchaseConfirmationException(
+                PurchaseConfirmationFailure.WithdrawalMismatch,
                 "The purchase's withdrawal instructions hash does not match the loaded SkyCofl withdrawal document.");
     }
 
