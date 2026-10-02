@@ -65,11 +65,12 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
             ? parsedPort
             : 587;
         var from = config["SMTP_FROM"] ?? "noreply@coflnet.com";
-        var documents = legalDocuments.Get(
+        var documents = await legalDocuments.GetForPurchase(
             locale,
             string.IsNullOrWhiteSpace(payment.AgreementId)
                 ? "skycofl"
-                : payment.AgreementId);
+                : payment.AgreementId,
+            payment);
         ValidateAgreement(payment, documents);
 
         var text = BuildContent(payment, locale, documents);

@@ -7,6 +7,8 @@ using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using Coflnet.Sky.EventBroker.Models;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
@@ -31,6 +33,20 @@ public sealed class LegalDocumentProvider : IHostedService
     // Swapped in atomically once a full (en + de) load succeeds, so readers either see the
     // previous complete snapshot or the new one - never a half-populated one.
     private volatile Dictionary<string, LegalDocuments> localized;
+
+    /// <summary>Upper bound of cached previous-version withdrawal documents.</summary>
+    internal const int ArchiveCacheLimit = 32;
+    private static readonly Regex SafeVersion = new(
+        "^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$",
+        RegexOptions.Compiled,
+        TimeSpan.FromMilliseconds(100));
+    private readonly Dictionary<string, LegalDocument> archiveCache = [];
+    private readonly Queue<string> archiveOrder = new();
+    private readonly object archiveLock = new();
+
+    // Optional "archive" list of the manifest's withdrawal entry (previous versions). Absent in
+    // today's manifest; the versioned file name pattern is used as the fallback.
+    private volatile List<ArchiveEntry> withdrawalArchive = [];
 
     public LegalDocumentProvider(
         IHttpClientFactory clients,
@@ -89,6 +105,141 @@ public sealed class LegalDocumentProvider : IHostedService
             : throw new PurchaseConfirmationException(
                 PurchaseConfirmationFailure.DocumentsNotLoaded,
                 $"Agreement {agreementId} is not loaded for purchase confirmation.");
+    }
+
+    /// <summary>
+    /// Like <see cref="Get"/>, but attaches the withdrawal instructions the customer actually
+    /// accepted. SkyApi stamps the purchase with the withdrawal version and sha256 it held at the
+    /// time, which can be older than the version loaded here. A previous version is accepted only
+    /// when its bytes hash to the purchase's sha256; otherwise the current documents are returned
+    /// unchanged and <c>ValidateAgreement</c> reports the mismatch.
+    /// </summary>
+    internal async Task<LegalDocuments> GetForPurchase(
+        string locale,
+        string agreementId,
+        PaymentEvent payment,
+        CancellationToken cancellationToken = default)
+    {
+        var current = Get(locale, agreementId);
+        if ((string.IsNullOrWhiteSpace(payment.WithdrawalVersion)
+                && string.IsNullOrWhiteSpace(payment.WithdrawalSha256))
+            || WithdrawalMatches(current.Withdrawal, payment))
+            return current;
+
+        var archived = await ResolveArchivedWithdrawal(
+            locale, current.Withdrawal, payment, cancellationToken);
+        if (archived == null)
+            return current;
+        logger?.LogInformation(
+            "Attaching archived withdrawal instructions {Version} that the purchase accepted (current is {CurrentVersion})",
+            archived.Version,
+            current.Withdrawal.Version);
+        return current with { Withdrawal = archived };
+    }
+
+    private static bool WithdrawalMatches(LegalDocument document, PaymentEvent payment) =>
+        (string.IsNullOrWhiteSpace(payment.WithdrawalVersion)
+            || string.Equals(payment.WithdrawalVersion, document.Version, StringComparison.OrdinalIgnoreCase))
+        && (string.IsNullOrWhiteSpace(payment.WithdrawalSha256)
+            || string.Equals(payment.WithdrawalSha256, document.Hash, StringComparison.OrdinalIgnoreCase));
+
+    private async Task<LegalDocument> ResolveArchivedWithdrawal(
+        string locale,
+        LegalDocument current,
+        PaymentEvent payment,
+        CancellationToken cancellationToken)
+    {
+        var version = payment.WithdrawalVersion?.Trim();
+        var expectedHash = payment.WithdrawalSha256?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(version) || !SafeVersion.IsMatch(version) || !IsSha256(expectedHash))
+            return null;
+        var language = LocaleHelper.IsGerman(locale) ? "de" : "en";
+        var cacheKey = $"{language}:{version}:{expectedHash}".ToLowerInvariant();
+        lock (archiveLock)
+        {
+            if (archiveCache.TryGetValue(cacheKey, out var cached))
+                return cached;
+        }
+
+        var source = new Uri(current.Url);
+        string url = null;
+        var entry = withdrawalArchive.FirstOrDefault(item => string.Equals(
+            item.Version, version, StringComparison.OrdinalIgnoreCase));
+        if (entry?.Locales != null && entry.Locales.TryGetValue(language, out var listed))
+        {
+            if (!string.Equals(listed.Sha256, expectedHash, StringComparison.OrdinalIgnoreCase))
+                return null;
+            url = listed.Url;
+        }
+        else
+        {
+            // .../withdrawal-en-2026-09-30.md -> .../withdrawal-en-<purchase version>.md
+            var name = current.FileName;
+            var index = name.LastIndexOf(current.Version, StringComparison.Ordinal);
+            if (index < 0)
+                return null;
+            url = new Uri(source, name[..index] + version + name[(index + current.Version.Length)..]).AbsoluteUri;
+        }
+        if (!TryUri(source, url, out var uri))
+            return null;
+
+        byte[] content;
+        try
+        {
+            using var response = await clients.CreateClient(nameof(LegalDocumentProvider))
+                .GetAsync(uri, cancellationToken);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return null;
+            response.EnsureSuccessStatusCode();
+            content = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException
+            || (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            // not "no such version": retry later instead of a permanent mismatch
+            throw new PurchaseConfirmationException(
+                PurchaseConfirmationFailure.DocumentsNotLoaded,
+                $"The archived withdrawal instructions {version} could not be fetched.",
+                exception);
+        }
+        var hash = Sha256(content);
+        if (!hash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var archived = new LegalDocument(
+            "withdrawal",
+            current.Title,
+            Path.GetFileName(uri.AbsolutePath),
+            version,
+            uri.AbsoluteUri,
+            content,
+            hash,
+            null);
+        lock (archiveLock)
+        {
+            if (archiveCache.TryAdd(cacheKey, archived))
+            {
+                archiveOrder.Enqueue(cacheKey);
+                while (archiveOrder.Count > ArchiveCacheLimit)
+                    archiveCache.Remove(archiveOrder.Dequeue());
+            }
+        }
+        return archived;
+    }
+
+    /// <summary>Test hook: publishes a snapshot as a completed load would.</summary>
+    internal void SetLoadedForTests(
+        Dictionary<string, LegalDocuments> snapshot,
+        List<ArchiveEntry> archive = null)
+    {
+        localized = snapshot;
+        withdrawalArchive = archive ?? [];
+    }
+
+    internal int ArchiveCacheCount
+    {
+        get { lock (archiveLock) return archiveCache.Count; }
     }
 
     private async Task RefreshUntilLoaded(CancellationToken cancellationToken)
@@ -214,6 +365,7 @@ public sealed class LegalDocumentProvider : IHostedService
         }
 
         // publish atomically: readers never observe a partially populated set of locales
+        withdrawalArchive = withdrawal.Archive ?? [];
         localized = loaded;
     }
 
@@ -332,9 +484,16 @@ public sealed class LegalDocumentProvider : IHostedService
         public string Version { get; set; }
         public string AcceptanceHash { get; set; }
         public Dictionary<string, Locale> Locales { get; set; } = [];
+        public List<ArchiveEntry> Archive { get; set; }
     }
 
-    private sealed class Locale
+    internal sealed class ArchiveEntry
+    {
+        public string Version { get; set; }
+        public Dictionary<string, Locale> Locales { get; set; } = [];
+    }
+
+    internal sealed class Locale
     {
         public string Url { get; set; }
         public string Sha256 { get; set; }
