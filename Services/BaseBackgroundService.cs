@@ -93,7 +93,8 @@ namespace Coflnet.Sky.EventBroker.Services
                     paymentConfirmationDroppedCount.Inc();
                 }
             }, stoppingToken, "sky-eventbroker-payment-confirmations", AutoOffsetReset.Earliest, new PaymentDeserializer());
-            var verfify = Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config, config["TOPICS:VERIFIED"], async batch =>
+            var verifyBackoff = new ConsumeBackoff();
+            var verfify = KeepConsuming("verification", verifyBackoff, () => Kafka.KafkaConsumer.ConsumeBatch<VerificationEvent>(config, config["TOPICS:VERIFIED"], async batch =>
             {
                 try
                 {
@@ -104,14 +105,16 @@ namespace Coflnet.Sky.EventBroker.Services
                         var service = GetService(scope);
                         await service.Verified(lp.UserId, lp.MinecraftUuid, lp.ExistingConCount);
                     }
+                    verifyBackoff.Reset();
                 }
                 catch (Exception e)
                 {
                     logger.LogError(e, "Error while processing verification");
                     throw;
                 }
-            }, stoppingToken, "sky-eventbroker", 2);
-            var notification = Kafka.KafkaConsumer.ConsumeBatch(config, config["TOPICS:NOTIFICATIONS"], async lp =>
+            }, stoppingToken, "sky-eventbroker", 2), stoppingToken);
+            var notificationBackoff = new ConsumeBackoff();
+            var notification = KeepConsuming("notification", notificationBackoff, () => Kafka.KafkaConsumer.ConsumeBatch(config, config["TOPICS:NOTIFICATIONS"], async lp =>
             {
                 try
                 {
@@ -119,18 +122,20 @@ namespace Coflnet.Sky.EventBroker.Services
                     {
                         await ProcessNotification(item);
                     });
+                    notificationBackoff.Reset();
                 }
                 catch (Exception e)
                 {
                     logger.LogError(e, "Error while processing notification");
                 }
-            }, stoppingToken, "sky-eventbroker", 3, AutoOffsetReset.Latest, new NotificationDeserializer());
+            }, stoppingToken, "sky-eventbroker", 3, AutoOffsetReset.Latest, new NotificationDeserializer()), stoppingToken);
 
             var lowballTopic = config["TOPICS:LOWBALL_OFFERS"];
             Task lowball = Task.CompletedTask;
             if (!string.IsNullOrEmpty(lowballTopic))
             {
-                lowball = Kafka.KafkaConsumer.ConsumeBatch<LowballOfferMessage>(config, lowballTopic, async batch =>
+                var lowballBackoff = new ConsumeBackoff();
+                lowball = KeepConsuming("lowball", lowballBackoff, () => Kafka.KafkaConsumer.ConsumeBatch<LowballOfferMessage>(config, lowballTopic, async batch =>
                 {
                     try
                     {
@@ -138,12 +143,13 @@ namespace Coflnet.Sky.EventBroker.Services
                         {
                             await ProcessLowballOffer(offer);
                         }
+                        lowballBackoff.Reset();
                     }
                     catch (Exception e)
                     {
                         logger.LogError(e, "Error while processing lowball offer");
                     }
-                }, stoppingToken, "sky-eventbroker-lowball", 5, AutoOffsetReset.Latest);
+                }, stoppingToken, "sky-eventbroker-lowball", 5, AutoOffsetReset.Latest), stoppingToken);
             }
 
             var cleanUp = Task.Run(async () =>
@@ -186,6 +192,11 @@ namespace Coflnet.Sky.EventBroker.Services
             logger.LogError("A background task exited");
             await completed;
             throw new Exception("A background task exited without an error");
+        }
+
+        private Task KeepConsuming(string name, ConsumeBackoff backoff, Func<Task> consumeOnce, CancellationToken stoppingToken)
+        {
+            return ConsumeRetryLoop.RunAsync(name, consumeOnce, backoff, logger, stoppingToken);
         }
 
         private async Task DeliverPurchaseConfirmations(
