@@ -11,16 +11,27 @@ namespace Coflnet.Sky.EventBroker.Services;
 
 public sealed class PurchaseConfirmationDeliveryService
 {
-    private static readonly Prometheus.Counter parkedCount = Prometheus.Metrics.CreateCounter(
-        "sky_eventbroker_purchase_confirmation_parked_total",
-        "Purchase confirmations parked after exhausting their delivery retries");
+    static PurchaseConfirmationDeliveryService()
+    {
+        PurchaseConfirmationMetrics.Initialize();
+    }
+
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// After this many attempts a permanently failing row (bad address, mismatched terms hash, ...)
-    /// is parked (<see cref="PurchaseConfirmationDelivery.FailedAt"/>) instead of being retried forever.
+    /// Transient failures are retried on the fast exponential backoff (max 5 minutes) for this
+    /// many attempts, about 13.5 minutes in total, then on the slow schedule.
     /// </summary>
-    private const int MaxAttempts = 10;
+    internal const int MaxFastAttempts = 10;
+
+    /// <summary>Retry interval after the fast attempts are used up (SMTP outage, no e-mail yet, ...).</summary>
+    internal static readonly TimeSpan SlowRetryInterval = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// A transiently failing row is parked (<see cref="PurchaseConfirmationDelivery.FailedAt"/>,
+    /// needs an operator) by the first failed attempt at or after this age (<c>CreatedAt</c>).
+    /// </summary>
+    internal static readonly TimeSpan MaxRowAge = TimeSpan.FromHours(48);
 
     /// <summary>
     /// How many times the mark-as-sent update is retried after a successful send before giving up
@@ -100,12 +111,14 @@ public sealed class PurchaseConfirmationDeliveryService
                 }
                 catch (Exception exception)
                 {
-                    throw new InvalidOperationException(
+                    throw new PurchaseConfirmationException(
+                        PurchaseConfirmationFailure.RecipientLookupFailed,
                         $"Could not resolve a recipient email for purchase confirmation {row.Reference} via the indexer",
                         exception);
                 }
                 if (string.IsNullOrWhiteSpace(resolvedEmail))
-                    throw new InvalidOperationException(
+                    throw new PurchaseConfirmationException(
+                        PurchaseConfirmationFailure.NoRecipient,
                         $"No account email found for purchase confirmation {row.Reference}");
                 recipient = resolvedEmail;
             }
@@ -118,16 +131,23 @@ public sealed class PurchaseConfirmationDeliveryService
         catch (Exception exception)
         {
             // The send itself failed (SMTP down, bad address, terms-hash mismatch, ...). No email
-            // went out, so it is safe to schedule a retry (or park after MaxAttempts) here.
+            // went out, so it is safe to schedule a retry (or park, see below) here.
             // Compute the backoff from "now" as of the failure, not the (possibly long stale, given
             // SmtpClient's ~100s default timeout) "now" captured before the send - otherwise the
             // backoff can already be in the past and become a no-op.
             var failedAt = DateTime.UtcNow;
-            var error = $"{exception.GetType().Name}: {exception.Message}";
-            if (error.Length > 2000)
-                error = error[..2000];
+            var (reason, kind) = PurchaseConfirmationFailure.Classify(exception);
+            var error = PurchaseConfirmationFailure.FormatError(reason, exception);
+            PurchaseConfirmationMetrics.AttemptFailed.WithLabels(reason).Inc();
+            logger.LogWarning(
+                exception,
+                "Purchase confirmation {Reference} attempt {Attempt} failed ({Reason})",
+                row.Reference,
+                row.Attempts,
+                reason);
 
-            if (row.Attempts >= MaxAttempts)
+            if (kind == PurchaseConfirmationFailureKind.Permanent
+                || failedAt - row.CreatedAt >= MaxRowAge)
             {
                 var parked = await db.PurchaseConfirmationDeliveries
                     .Where(item => item.Id == row.Id && item.LeaseId == leaseId)
@@ -138,17 +158,21 @@ public sealed class PurchaseConfirmationDeliveryService
                         .SetProperty(item => item.LastError, error),
                         cancellationToken);
                 if (parked > 0)
-                    parkedCount.Inc();
+                    PurchaseConfirmationMetrics.Parked.WithLabels(reason).Inc();
                 logger.LogError(
                     exception,
-                    "Purchase confirmation {Reference} failed permanently after {Attempts} attempts and was parked",
+                    "Purchase confirmation {Reference} failed permanently after {Attempts} attempts and was parked ({Reason}, {Kind})",
                     row.Reference,
-                    row.Attempts);
+                    row.Attempts,
+                    reason,
+                    kind);
                 return true;
             }
 
-            var retryAt = failedAt + TimeSpan.FromSeconds(
-                Math.Min(300, Math.Pow(2, Math.Min(row.Attempts, 8))));
+            var retryAt = failedAt + (row.Attempts >= MaxFastAttempts
+                ? SlowRetryInterval
+                : TimeSpan.FromSeconds(
+                    Math.Min(300, Math.Pow(2, Math.Min(row.Attempts, 8)))));
             await db.PurchaseConfirmationDeliveries
                 .Where(item => item.Id == row.Id && item.LeaseId == leaseId)
                 .ExecuteUpdateAsync(update => update
@@ -157,10 +181,6 @@ public sealed class PurchaseConfirmationDeliveryService
                     .SetProperty(item => item.LeaseUntil, (DateTime?)null)
                     .SetProperty(item => item.LastError, error),
                     cancellationToken);
-            logger.LogWarning(
-                exception,
-                "Could not send purchase confirmation {Reference}; retry scheduled",
-                row.Reference);
             return true;
         }
 
@@ -183,6 +203,7 @@ public sealed class PurchaseConfirmationDeliveryService
                         .SetProperty(item => item.LeaseUntil, (DateTime?)null)
                         .SetProperty(item => item.LastError, (string)null),
                         cancellationToken);
+                PurchaseConfirmationMetrics.Sent.Inc();
                 return true;
             }
             catch (Exception markException) when (attempt < MarkSentAttempts)

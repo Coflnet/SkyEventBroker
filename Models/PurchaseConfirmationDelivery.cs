@@ -23,15 +23,17 @@ public class PurchaseConfirmationDelivery
     public DateTime? SentAt { get; set; }
 
     /// <summary>
-    /// Set once a row has exhausted its retry budget (see
-    /// <see cref="PurchaseConfirmationDeliveryService"/>'s max-attempts constant). Parked rows
-    /// are excluded from the claim query instead of being retried forever.
+    /// Set when a row needs an operator: it failed permanently (mismatching terms, rejected
+    /// recipient) or kept failing transiently for the max row age (see
+    /// <c>PurchaseConfirmationDeliveryService</c>). Parked rows are excluded from the claim
+    /// query until requeued via the operator endpoint.
     /// </summary>
     public DateTime? FailedAt { get; set; }
     public int Attempts { get; set; }
     public Guid? LeaseId { get; set; }
     public DateTime? LeaseUntil { get; set; }
 
+    /// <summary>Formatted as <c>[reason] Type: message</c>.</summary>
     [MaxLength(2000)]
     public string LastError { get; set; }
 }
