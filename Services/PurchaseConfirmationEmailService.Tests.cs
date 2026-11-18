@@ -250,6 +250,142 @@ public class PurchaseConfirmationEmailServiceTests
             documents));
     }
 
+    private static PaymentEvent SubscriptionPayment(
+        string provider, int weeks, string method = "card") =>
+        new()
+        {
+            ProductId = "premium",
+            PaymentProvider = provider,
+            PaymentMethod = method,
+            PaymentProviderTransactionId = "sub-1",
+            Currency = "EUR",
+            SubscriptionBillingWeeks = weeks,
+            Timestamp = new DateTime(2026, 11, 18, 10, 0, 0, DateTimeKind.Utc)
+        };
+
+    private static string Build(PaymentEvent payment, string locale) =>
+        PurchaseConfirmationEmailService.BuildContent(payment, locale, TestDocuments(locale));
+
+    [Test]
+    public void BuildContent_NoSubscriptionSectionWithoutBillingWeeks()
+    {
+        var payment = SubscriptionPayment("stripe", 4);
+        payment.SubscriptionBillingWeeks = null;
+
+        Assert.That(Build(payment, "en"), Does.Not.Contain("SUBSCRIPTION\n"));
+    }
+
+    [Test]
+    public void BuildContent_FourWeekPlanRenewsEveryFourWeeks()
+    {
+        var payment = SubscriptionPayment("stripe", 4);
+        payment.SubscriptionRenewalAmount = 4.99m;
+
+        Assert.That(Build(payment, "en"), Does.Contain("SUBSCRIPTION\n------------")
+            .And.Contain("Billing period: 4 weeks")
+            .And.Contain("renews every 4 weeks at 4.99 EUR until cancelled")
+            .And.Contain("https://sky.coflnet.com/account")
+            .And.Contain("https://coflnet.com/cancel-contract")
+            .And.Contain("Purchase confirmation"));
+        Assert.That(Build(payment, "de"), Does.Contain("ABONNEMENT\n----------")
+            .And.Contain("Abrechnungszeitraum: 4 Wochen")
+            .And.Contain("verlängert sich alle 4 Wochen zu 4.99 EUR bis zur Kündigung")
+            .And.Contain("https://coflnet.com/de/cancel-contract"));
+    }
+
+    [Test]
+    public void BuildContent_LongPlanFirstTermContinuesEveryFourWeeksWithoutAmountWhenUnknown()
+    {
+        var payment = SubscriptionPayment("paypal", 52);
+
+        var en = Build(payment, "en");
+        Assert.That(en, Does.Contain("Billing period: 52 weeks")
+            .And.Contain("After the first 52 weeks it continues every 4 weeks at the 4-week price until cancelled"));
+        Assert.That(Build(payment, "de"), Does.Contain("Nach den ersten 52 Wochen läuft das Abonnement alle 4 Wochen zum 4-Wochen-Preis weiter bis zur Kündigung"));
+    }
+
+    [Test]
+    public void BuildContent_LongPlanFirstTermShowsRenewalPriceWhenProvided()
+    {
+        var payment = SubscriptionPayment("stripe", 13);
+        payment.SubscriptionRenewalAmount = 5m;
+
+        Assert.That(Build(payment, "en"), Does.Contain("4-week price (5.00 EUR) until cancelled"));
+    }
+
+    [Test]
+    public void BuildContent_PlanRepeatingItsTermIsNotClaimedToContinueEveryFourWeeks()
+    {
+        var payment = SubscriptionPayment("paypal", 13);
+        payment.SubscriptionRenewalWeeks = 13;
+
+        Assert.That(Build(payment, "en"), Does.Contain("renews every 13 weeks until cancelled")
+            .And.Not.Contain("4-week price"));
+    }
+
+    [Test]
+    public void BuildContent_LemonSqueezyKeepsItsOwnRenewalWording()
+    {
+        var payment = SubscriptionPayment("lemonsqueezy", 52);
+
+        var text = Build(payment, "en");
+        Assert.That(text, Does.Contain("Renewal and billing follow the checkout terms of lemonsqueezy")
+            .And.Contain("Cancel anytime")
+            .And.Contain("Fulfillment confirmation")
+            .And.Not.Contain("every 4 weeks")
+            .And.Not.Contain("4-week price"));
+    }
+
+    [Test]
+    public void BuildContent_ManagedPaymentsSubscriptionIsMerchantOfRecordSaleWithContinuation()
+    {
+        var payment = SubscriptionPayment("stripe", 52, "stripe_managed_payments");
+
+        var en = Build(payment, "en");
+        Assert.That(en, Does.StartWith("Fulfillment confirmation")
+            .And.Contain("Sold through Link, LLC (Stripe Managed Payments) was the seller (merchant of record)")
+            .And.Contain("continues every 4 weeks at the 4-week price"));
+        Assert.That(Build(payment, "de"), Does.StartWith("Bereitstellungsbestätigung")
+            .And.Not.StartWith("Kaufbestätigung"));
+    }
+
+    [Test]
+    public void BuildContent_DirectStripeSubscriptionStaysCoflnetSale()
+    {
+        var text = Build(SubscriptionPayment("stripe", 4), "en");
+
+        Assert.That(text, Does.StartWith("Purchase confirmation")
+            .And.Not.Contain("merchant of record"));
+    }
+
+    [Test]
+    public void IsMerchantOfRecord_ClassifiesProvidersAndManagedPayments()
+    {
+        Assert.That(PurchaseConfirmationEmailService.IsMerchantOfRecord(
+            new PaymentEvent { PaymentProvider = "stripe", PaymentMethod = "stripe_managed_payments" }), Is.True);
+        Assert.That(PurchaseConfirmationEmailService.IsMerchantOfRecord(
+            new PaymentEvent { PaymentProvider = "lemonsqueezy" }), Is.True);
+        Assert.That(PurchaseConfirmationEmailService.IsMerchantOfRecord(
+            new PaymentEvent { PaymentProvider = "Google Play" }), Is.True);
+        Assert.That(PurchaseConfirmationEmailService.IsMerchantOfRecord(
+            new PaymentEvent { PaymentProvider = "stripe", PaymentMethod = "card" }), Is.False);
+        Assert.That(PurchaseConfirmationEmailService.IsMerchantOfRecord(
+            new PaymentEvent { PaymentProvider = "paypal", PaymentMethod = "paypal" }), Is.False);
+    }
+
+    [Test]
+    public void BuildContent_RenewalIsLabelledAsRenewalConfirmation()
+    {
+        var direct = SubscriptionPayment("stripe", 4);
+        direct.SubscriptionIsRenewal = true;
+        var managed = SubscriptionPayment("stripe", 4, "stripe_managed_payments");
+        managed.SubscriptionIsRenewal = true;
+
+        Assert.That(Build(direct, "en"), Does.StartWith("Renewal confirmation"));
+        Assert.That(Build(direct, "de"), Does.StartWith("Verlängerungsbestätigung"));
+        Assert.That(Build(managed, "en"), Does.StartWith("Fulfillment confirmation — renewal"));
+    }
+
     private static LegalDocuments TestDocuments(string language) =>
         new(
             "skycofl",

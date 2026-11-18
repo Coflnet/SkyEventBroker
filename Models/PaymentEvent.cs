@@ -33,4 +33,19 @@ public class PaymentEvent
     public long GrossEurCents { get; set; }
     public long VatEurCents { get; set; }
     public string OrderDetailsJson { get; set; }
+
+    // Optional subscription terms. Payments does not send these yet; without them the
+    // confirmation email contains no subscription section.
+
+    /// <summary>Billing period in weeks (4, 13 or 52) of the term this payment paid. Its presence marks the payment as a subscription payment.</summary>
+    public int? SubscriptionBillingWeeks { get; set; }
+
+    /// <summary>Weeks of the cycles that follow this term (4 for the 4-week continuation, or the billing weeks for plans that repeat their term).</summary>
+    public int? SubscriptionRenewalWeeks { get; set; }
+
+    /// <summary>What each following cycle charges, in <see cref="Currency"/>.</summary>
+    public decimal? SubscriptionRenewalAmount { get; set; }
+
+    /// <summary>True when this payment renews an already running subscription instead of starting it.</summary>
+    public bool? SubscriptionIsRenewal { get; set; }
 }
