@@ -72,13 +72,7 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
         ValidateAgreement(payment, documents);
 
         var text = BuildContent(payment, locale, documents);
-        var subject = IsMerchantOfRecord(payment.PaymentProvider)
-            ? LocaleHelper.IsGerman(locale)
-                ? "Bereitstellungsbestätigung — Coflnet"
-                : "Fulfillment confirmation — Coflnet"
-            : LocaleHelper.IsGerman(locale)
-                ? "Kaufbestätigung — Coflnet"
-                : "Purchase confirmation — Coflnet";
+        var subject = $"{Title(payment, LocaleHelper.IsGerman(locale))} — Coflnet";
 
         try
         {
@@ -171,7 +165,9 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
     {
         var german = LocaleHelper.IsGerman(locale);
         var provider = payment.PaymentProvider ?? "";
-        var merchantOfRecord = IsMerchantOfRecord(provider);
+        var merchantOfRecord = IsMerchantOfRecord(payment);
+        var seller = SellerName(payment);
+        var subscriptionTerms = SubscriptionTermsSection.Build(payment, german);
         var expertConfig = string.Equals(
             payment.AgreementId,
             "expertMarketplace",
@@ -236,11 +232,11 @@ Version: {payment.DeclarationVersion}
 
         if (german)
             return $"""
-{(merchantOfRecord ? "Bereitstellungsbestätigung" : "Kaufbestätigung")}
+{Title(payment, true)}
 ===================================================
 
 {(merchantOfRecord
-    ? $"Diese E-Mail bestätigt die Bereitstellung auf Ihrem Coflnet-Konto. {provider} war der beim Checkout ausgewiesene Verkäufer (Merchant of Record); dessen Beleg und Checkout-Bedingungen enthalten die verbindlichen Bestell-, Zahlungs- und Widerrufsangaben. Die beigefügten Coflnet-Dokumente betreffen nur das gesonderte SkyCofl-Nutzungsverhältnis und ändern den Verkauf durch {provider} nicht."
+    ? $"Diese E-Mail bestätigt die Bereitstellung auf Ihrem Coflnet-Konto. {seller} war der beim Checkout ausgewiesene Verkäufer (Merchant of Record); dessen Beleg und Checkout-Bedingungen enthalten die verbindlichen Bestell-, Zahlungs- und Widerrufsangaben. Die beigefügten Coflnet-Dokumente betreffen nur das gesonderte SkyCofl-Nutzungsverhältnis und ändern den Verkauf durch {seller} nicht."
     : expertConfig
         ? "Diese E-Mail bestätigt Zahlung und Bestellung bei der Coflnet GmbH. Die Lizenz an der bezeichneten Experten-Konfigurationsfassung und die verwaltete Aktualisierungsfunktion werden unmittelbar nach Zustellung dieser Bestätigung bereitgestellt."
         : "Diese E-Mail bestätigt die Zahlung und Bereitstellung Ihres Vertrags mit der Coflnet GmbH.")}
@@ -257,7 +253,7 @@ Zahlungsanbieter: {provider}
 {(amount.Length == 0 ? "" : $"Betrag: {amount}\n")}{(payment.CoinAmount.HasValue ? $"CoflCoins: {payment.CoinAmount.Value.ToString("0.##", CultureInfo.InvariantCulture)}\n" : "")}{valuation}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Zahlungsart: {payment.PaymentMethod}\n")}
 {serviceDetails}
 {orderDetails}
-
+{subscriptionTerms}
 VEREINBARUNG
 -------------
 Erfasste Vereinbarung: {documents.AgreementId}
@@ -282,11 +278,11 @@ E-Mail: support@coflnet.com
 """;
 
         return $"""
-{(merchantOfRecord ? "Fulfillment confirmation" : "Purchase confirmation")}
+{Title(payment, false)}
 ===================================================
 
 {(merchantOfRecord
-    ? $"This email confirms fulfillment on your Coflnet account. {provider} was the seller (merchant of record) identified at checkout; its receipt and checkout terms contain the authoritative order, payment and withdrawal information. The attached Coflnet documents cover only the separate SkyCofl usage relationship and do not alter the sale by {provider}."
+    ? $"This email confirms fulfillment on your Coflnet account. {seller} was the seller (merchant of record) identified at checkout; its receipt and checkout terms contain the authoritative order, payment and withdrawal information. The attached Coflnet documents cover only the separate SkyCofl usage relationship and do not alter the sale by {seller}."
     : expertConfig
         ? "This email confirms payment and your order with Coflnet GmbH. The licence to the identified Expert Config version and the managed update facility are supplied immediately after delivery of this confirmation."
         : "This email confirms payment and fulfillment of your contract with Coflnet GmbH.")}
@@ -303,7 +299,7 @@ Payment provider: {provider}
 {(amount.Length == 0 ? "" : $"Amount: {amount}\n")}{(payment.CoinAmount.HasValue ? $"CoflCoins: {payment.CoinAmount.Value.ToString("0.##", CultureInfo.InvariantCulture)}\n" : "")}{valuation}{(string.IsNullOrWhiteSpace(payment.PaymentMethod) ? "" : $"Payment method: {payment.PaymentMethod}\n")}
 {serviceDetails}
 {orderDetails}
-
+{subscriptionTerms}
 AGREEMENT
 ---------
 Recorded agreement: {documents.AgreementId}
@@ -328,9 +324,37 @@ Email: support@coflnet.com
 """;
     }
 
+    internal const string ManagedPaymentsMethod = "stripe_managed_payments";
+
+    /// <summary>
+    /// Lemon Squeezy, Google Play and Stripe Managed Payments (Payments sends provider "stripe" with
+    /// payment method "stripe_managed_payments") sell as merchant of record; direct Stripe/PayPal sales are Coflnet's.
+    /// </summary>
+    internal static bool IsMerchantOfRecord(PaymentEvent payment) =>
+        IsMerchantOfRecord(payment.PaymentProvider)
+        || string.Equals(payment.PaymentMethod, ManagedPaymentsMethod, StringComparison.OrdinalIgnoreCase);
+
     private static bool IsMerchantOfRecord(string provider) =>
         string.Equals(provider, "lemonsqueezy", StringComparison.OrdinalIgnoreCase)
         || string.Equals(provider, "Google Play", StringComparison.OrdinalIgnoreCase);
+
+    private static string SellerName(PaymentEvent payment) =>
+        string.Equals(payment.PaymentMethod, ManagedPaymentsMethod, StringComparison.OrdinalIgnoreCase)
+            ? "Sold through Link, LLC (Stripe Managed Payments)"
+            : payment.PaymentProvider ?? "";
+
+    private static string Title(PaymentEvent payment, bool german)
+    {
+        var renewal = payment.SubscriptionIsRenewal == true;
+        if (!IsMerchantOfRecord(payment))
+            return renewal
+                ? german ? "Verlängerungsbestätigung" : "Renewal confirmation"
+                : german ? "Kaufbestätigung" : "Purchase confirmation";
+        var title = german ? "Bereitstellungsbestätigung" : "Fulfillment confirmation";
+        if (!renewal)
+            return title;
+        return german ? $"{title} — Verlängerung" : $"{title} — renewal";
+    }
 
     private static bool IsServicePurchase(PaymentEvent payment) =>
         string.Equals(
