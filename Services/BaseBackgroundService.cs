@@ -260,13 +260,26 @@ namespace Coflnet.Sky.EventBroker.Services
                 SourceType = SourceType.Subscription.ToString(),
                 Link = notification.click_action,
                 Summary = notification.title,
-                Reference = (notification.title + notification.click_action.Split("/").Last()).Truncate(32),
+                Reference = NotificationReference(notification),
                 User = new User()
                 {
                     UserId = userId
                 }
             });
             logger.LogInformation("Notification event received for {user}", userId);
+        }
+
+        /// <summary>
+        /// Builds the de-duplication reference (max 32 chars) of a subscription notification.
+        /// Flip titles ("New whitelisted auction for ...") alone exceed 32 chars, so truncating title + auction id
+        /// cut the auction id off and every later flip of the same item was dropped as already sent.
+        /// Hashing keeps title and link both significant.
+        /// </summary>
+        private static string NotificationReference(FirebaseNotification notification)
+        {
+            var hash = System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(notification.title + "|" + notification.click_action));
+            return Convert.ToHexString(hash)[..32];
         }
 
         private async Task ProcessLowballOffer(LowballOfferMessage offer)
