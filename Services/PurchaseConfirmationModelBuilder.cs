@@ -44,7 +44,7 @@ internal static class PurchaseConfirmationModelBuilder
     private static List<(string Label, string Value)> OverviewRows(PaymentEvent payment, bool german)
     {
         var rows = new List<(string, string)> { (german ? "Produkt" : "Product", PaymentDisplayNames.Product(payment)) };
-        var amount = Amount(payment);
+        var amount = TaxStatement.PaidAmount(payment, german);
         if (amount.Length > 0)
             rows.Add((german ? "Bezahlter Betrag" : "Amount paid", amount));
         if (payment.CoinAmount.HasValue)
@@ -65,11 +65,6 @@ internal static class PurchaseConfirmationModelBuilder
         var method = PaymentDisplayNames.Method(payment, german);
         return method.Length == 0 ? provider : provider.Length == 0 ? method : $"{provider} ({method})";
     }
-
-    private static string Amount(PaymentEvent payment) =>
-        payment.PayedAmount > 0
-            ? $"{payment.PayedAmount.ToString("0.00##", CultureInfo.InvariantCulture)} {payment.Currency}".Trim()
-            : "";
 
     private static string Intro(PaymentEvent payment, bool german)
     {

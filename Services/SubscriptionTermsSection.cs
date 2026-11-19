@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using Coflnet.Sky.EventBroker.Models;
 
 namespace Coflnet.Sky.EventBroker.Services;
@@ -52,15 +51,15 @@ internal static class SubscriptionTermsSection
         var next = payment.SubscriptionRenewalWeeks is > 0
             ? payment.SubscriptionRenewalWeeks.Value
             : DefaultRenewalWeeks;
-        var amount = RenewalAmount(payment);
+        var amount = TaxStatement.RenewalAmount(payment, german);
         var repeats = next == weeks || payment.SubscriptionIsRenewal == true;
         if (repeats)
             return german
                 ? $"Das Abonnement verlängert sich alle {Weeks(next, true)}{Price(amount, " zu ")} bis zur Kündigung."
                 : $"This subscription renews every {Weeks(next, false)}{Price(amount, " at ")} until cancelled.";
         return german
-            ? $"Nach den ersten {Weeks(weeks, true)} läuft das Abonnement alle {Weeks(next, true)} zum {next}-Wochen-Preis weiter{Price(amount, " (", ")")} bis zur Kündigung."
-            : $"After the first {Weeks(weeks, false)} it continues every {Weeks(next, false)} at the {next}-week price{Price(amount, " (", ")")} until cancelled.";
+            ? $"Nach den ersten {Weeks(weeks, true)} läuft das Abonnement alle {Weeks(next, true)} zum {next}-Wochen-Preis{Price(amount, " von ")} weiter bis zur Kündigung."
+            : $"After the first {Weeks(weeks, false)} it continues every {Weeks(next, false)} at the {next}-week price{Price(amount, " of ")} until cancelled.";
     }
 
     private static string ProviderSentence(PaymentEvent payment, bool german)
@@ -71,13 +70,8 @@ internal static class SubscriptionTermsSection
             : $"Renewal and billing follow the checkout terms of {provider}.";
     }
 
-    private static string RenewalAmount(PaymentEvent payment) =>
-        payment.SubscriptionRenewalAmount is > 0
-            ? $"{payment.SubscriptionRenewalAmount.Value.ToString("0.00##", CultureInfo.InvariantCulture)} {payment.Currency}".Trim()
-            : "";
-
-    private static string Price(string amount, string before, string after = "") =>
-        amount.Length == 0 ? "" : $"{before}{amount}{after}";
+    private static string Price(string amount, string before) =>
+        amount.Length == 0 ? "" : before + amount;
 
     private static string Weeks(int weeks, bool german) =>
         german ? $"{weeks} {(weeks == 1 ? "Woche" : "Wochen")}" : $"{weeks} {(weeks == 1 ? "week" : "weeks")}";
