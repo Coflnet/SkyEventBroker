@@ -5,7 +5,7 @@ using Coflnet.Sky.EventBroker.Models;
 namespace Coflnet.Sky.EventBroker.Services;
 
 /// <summary>
-/// The "what happens next / how to cancel" section of a subscription purchase confirmation.
+/// The subscription terms (period, renewal, how to cancel) of a subscription purchase confirmation.
 /// </summary>
 internal static class SubscriptionTermsSection
 {
@@ -17,35 +17,26 @@ internal static class SubscriptionTermsSection
     public static bool IsSubscription(PaymentEvent payment) =>
         payment.SubscriptionBillingWeeks is > 0;
 
-    /// <summary>Empty when the event is no subscription payment.</summary>
-    public static string Build(PaymentEvent payment, bool german)
+    /// <summary>The billing period row of the overview; null when the event is no subscription payment.</summary>
+    public static (string Label, string Value)? BillingPeriod(PaymentEvent payment, bool german) =>
+        IsSubscription(payment)
+            ? (german ? "Abrechnungszeitraum" : "Billing period", Weeks(payment.SubscriptionBillingWeeks.Value, german))
+            : null;
+
+    /// <summary>Renewal terms and how to cancel; empty when the event is no subscription payment.</summary>
+    public static string[] Notes(PaymentEvent payment, bool german)
     {
         if (!IsSubscription(payment))
-            return "";
+            return [];
         var weeks = payment.SubscriptionBillingWeeks.Value;
         var next = IsCoflnetContinuation(payment)
             ? ContinuationSentence(payment, weeks, german)
             : ProviderSentence(payment, german);
         var cancelUrl = german ? CancelUrlDe : CancelUrlEn;
-        return german
-            ? $"""
-
-ABONNEMENT
-----------
-Abrechnungszeitraum: {Weeks(weeks, true)}
-{next}
-Jederzeit kündbar: in Ihrem Konto unter {AccountUrl} oder über die Kündigungsseite {cancelUrl}
-
-"""
-            : $"""
-
-SUBSCRIPTION
-------------
-Billing period: {Weeks(weeks, false)}
-{next}
-Cancel anytime: in your account at {AccountUrl} or via the cancellation page {cancelUrl}
-
-""";
+        var cancel = german
+            ? $"Jederzeit kündbar: in Ihrem Konto unter {AccountUrl} oder über die Kündigungsseite {cancelUrl}"
+            : $"Cancel anytime: in your account at {AccountUrl} or via the cancellation page {cancelUrl}";
+        return [next, cancel];
     }
 
     /// <summary>Direct Stripe/PayPal and Managed Payments subscriptions continue as Coflnet's own 4-week plans.</summary>
@@ -74,7 +65,7 @@ Cancel anytime: in your account at {AccountUrl} or via the cancellation page {ca
 
     private static string ProviderSentence(PaymentEvent payment, bool german)
     {
-        var provider = payment.PaymentProvider ?? "";
+        var provider = PaymentDisplayNames.Provider(payment.PaymentProvider);
         return german
             ? $"Verlängerung und Abrechnung richten sich nach den Checkout-Bedingungen von {provider}."
             : $"Renewal and billing follow the checkout terms of {provider}.";

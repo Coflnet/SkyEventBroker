@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
@@ -57,17 +58,16 @@ public class PurchaseConfirmationEmailServiceTests
             "en",
             documents);
 
-        Assert.That(text, Does.Contain("ORDER\n-----")
-            .And.Contain("PAYMENT\n-------")
-            .And.Contain("AGREEMENT\n---------")
+        Assert.That(text, Does.Contain("ORDER OVERVIEW\n--------------")
+            .And.Contain("Product: premium")
+            .And.Contain("Amount paid: 12.34 EUR")
+            .And.Contain("Date: 2026-08-09 10:30:00 UTC")
+            .And.Contain("Paid with: Stripe (Card)")
+            .And.Contain("Transaction reference: ref-123")
             .And.Contain("WITHDRAWAL\n----------")
-            .And.Contain("Amount: 12.34 EUR")
-            .And.Contain("Payment method: card")
-            .And.Contain(documents.AgreementHash)
-            .And.Contain(documents.AgreementUrl)
-            .And.Contain(documents.Withdrawal.Hash));
+            .And.Contain(documents.Withdrawal.Url));
         foreach (var document in documents.AgreementDocuments)
-            Assert.That(text, Does.Contain(document.Url).And.Contain(document.Hash));
+            Assert.That(text, Does.Contain($"- {document.Title} ({document.Version})"));
     }
 
     [Test]
@@ -281,6 +281,199 @@ public class PurchaseConfirmationEmailServiceTests
             documents));
     }
 
+    private static PaymentEvent PaidOrder(string provider, string method, string title = null) =>
+        new()
+        {
+            ProductId = "144",
+            ProductTitle = title,
+            PaymentProvider = provider,
+            PaymentMethod = method,
+            PaymentProviderTransactionId = "4M9650370X895012P",
+            PayedAmount = 1.15,
+            Currency = "EUR",
+            Timestamp = new DateTime(2026, 11, 18, 10, 0, 0, DateTimeKind.Utc)
+        };
+
+    [Test]
+    public void SenderAddress_HasDisplayNameByDefault()
+    {
+        var address = PurchaseConfirmationEmailService.SenderAddress(new ConfigurationBuilder().Build());
+
+        Assert.That(address.ToString(), Is.EqualTo("\"Coflnet\" <noreply@coflnet.com>"));
+    }
+
+    [Test]
+    public void SenderAddress_UsesConfiguredNameAndAddress()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string>
+        {
+            ["SMTP_FROM"] = "billing@example.com",
+            ["SMTP_FROM_NAME"] = "Example Billing"
+        }).Build();
+
+        var address = PurchaseConfirmationEmailService.SenderAddress(config);
+
+        Assert.That((address.DisplayName, address.Address), Is.EqualTo(("Example Billing", "billing@example.com")));
+    }
+
+    [Test]
+    public void ReplyToAddress_DefaultsToSupportAndIsConfigurable()
+    {
+        var custom = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string>
+        {
+            ["SMTP_REPLY_TO"] = "help@example.com"
+        }).Build();
+
+        Assert.That(PurchaseConfirmationEmailService.ReplyToAddress(new ConfigurationBuilder().Build()).Address,
+            Is.EqualTo("support@coflnet.com"));
+        Assert.That(PurchaseConfirmationEmailService.ReplyToAddress(custom).Address, Is.EqualTo("help@example.com"));
+    }
+
+    [Test]
+    public void BuildContent_ShowsProductTitleInsteadOfTheId()
+    {
+        var text = Build(PaidOrder("paypal", "paypal", "Premium+ (4 weeks)"), "de");
+
+        Assert.That(text, Does.Contain("Produkt: Premium+ (4 weeks)").And.Not.Contain("144"));
+    }
+
+    [Test]
+    public void BuildContent_FallsBackToProductIdWithoutTitle()
+    {
+        var text = Build(PaidOrder("paypal", "paypal"), "en");
+
+        Assert.That(text, Does.Contain("Product: 144"));
+    }
+
+    [Test]
+    public void BuildContent_UsesReadableProviderAndOmitsMethodRepeatingIt()
+    {
+        var text = Build(PaidOrder("paypal", "paypal", "Premium"), "de");
+
+        Assert.That(text, Does.Contain("Zahlung über: PayPal\n").And.Not.Contain("PayPal (PayPal)"));
+    }
+
+    [TestCase("stripe", "card", "de", "Zahlung über: Stripe (Karte)")]
+    [TestCase("stripe", "card", "en", "Paid with: Stripe (Card)")]
+    [TestCase("stripe", "sepa_debit", "en", "Paid with: Stripe (SEPA direct debit)")]
+    public void BuildContent_ShowsReadableMethod(string provider, string method, string locale, string expected)
+    {
+        var text = Build(PaidOrder(provider, method, "Premium"), locale);
+
+        Assert.That(text, Does.Contain(expected));
+    }
+
+    [TestCase("de", "BESTELLÜBERSICHT", "WIDERRUF", "ANHÄNGE", "DATENSCHUTZ UND KONTAKT")]
+    [TestCase("en", "ORDER OVERVIEW", "WITHDRAWAL", "ATTACHMENTS", "PRIVACY AND SUPPORT")]
+    public void BuildContent_KeepsHumanSectionsInOrderEndingWithTheFooter(string locale, params string[] headings)
+    {
+        var text = Build(SubscriptionPayment("stripe", 4), locale);
+
+        var positions = headings.Select(heading => text.IndexOf(heading + "\n", StringComparison.Ordinal)).ToArray();
+        Assert.That(positions, Is.Ordered.And.All.GreaterThanOrEqualTo(0));
+        Assert.That(text.IndexOf("Coflnet GmbH, Dorfstraße", StringComparison.Ordinal), Is.GreaterThan(positions[^1]));
+        Assert.That(text, Does.EndWith("support@coflnet.com"));
+    }
+
+    [TestCase("de")]
+    [TestCase("en")]
+    public void Email_ContainsNoHashesDescriptorOrDocumentUrls(string locale)
+    {
+        var documents = TestDocuments(locale);
+        var payment = SubscriptionPayment("stripe", 4);
+
+        foreach (var body in new[]
+        {
+            PurchaseConfirmationEmailService.BuildContent(payment, locale, documents),
+            PurchaseConfirmationEmailService.BuildHtml(payment, locale, documents)
+        })
+        {
+            Assert.That(body, Does.Not.Contain(documents.AgreementHash)
+                .And.Not.Contain(documents.AgreementUrl)
+                .And.Not.Contain(documents.Withdrawal.Hash)
+                .And.Not.Contain("SHA-256"));
+            foreach (var document in documents.AgreementDocuments)
+                Assert.That(body, Does.Not.Contain(document.Hash).And.Not.Contain(document.Url));
+        }
+    }
+
+    [Test]
+    public void CreateMessage_IsMultipartAlternativeWithoutAgreementJson()
+    {
+        var documents = TestDocuments("de");
+        var payment = SubscriptionPayment("stripe", 4);
+
+        using var message = PurchaseConfirmationEmailService.CreateMessage(
+            new ConfigurationBuilder().Build(), "buyer@example.com", "de", payment, documents, "ref1");
+
+        Assert.That(message.From.ToString(), Is.EqualTo("\"Coflnet\" <noreply@coflnet.com>"));
+        Assert.That(message.ReplyToList.Single().Address, Is.EqualTo("support@coflnet.com"));
+        Assert.That(message.IsBodyHtml, Is.False);
+        Assert.That(message.Body, Does.Contain("BESTELLÜBERSICHT"));
+        var html = message.AlternateViews.Single();
+        Assert.That(html.ContentType.MediaType, Is.EqualTo("text/html"));
+        Assert.That(message.Attachments.Select(a => a.Name), Is.EquivalentTo(
+            documents.AgreementDocuments.Select(d => d.FileName).Append(documents.Withdrawal.FileName)));
+        Assert.That(message.Attachments.Select(a => a.ContentType.MediaType), Does.Not.Contain("application/json"));
+    }
+
+    [Test]
+    public void CreateMessage_AttachesOrderDetailsWhenPresent()
+    {
+        var payment = SubscriptionPayment("stripe", 4);
+        payment.OrderDetailsJson = "{\"a\":1}";
+
+        using var message = PurchaseConfirmationEmailService.CreateMessage(
+            new ConfigurationBuilder().Build(), "buyer@example.com", "en", payment, TestDocuments("en"));
+
+        Assert.That(message.Attachments.Select(a => a.Name), Does.Contain("order-details.json"));
+    }
+
+    [Test]
+    public void Html_ContainsOverviewWithRenewalAndCancelLinkBeforeTheLegalParts()
+    {
+        var payment = SubscriptionPayment("stripe", 4);
+        payment.ProductTitle = "Premium";
+        payment.PayedAmount = 9.69;
+        payment.SubscriptionRenewalAmount = 9.69m;
+
+        var html = PurchaseConfirmationEmailService.BuildHtml(payment, "de", TestDocuments("de"));
+
+        var overview = html.IndexOf("Bestellübersicht", StringComparison.Ordinal);
+        var renewal = html.IndexOf("verlängert sich alle 4 Wochen zu 9.69 EUR bis zur Kündigung", StringComparison.Ordinal);
+        var cancel = html.IndexOf("href=\"https://coflnet.com/de/cancel-contract\"", StringComparison.Ordinal);
+        var withdrawal = html.IndexOf(">Widerruf<", StringComparison.Ordinal);
+        Assert.That(new[] { overview, renewal, cancel, withdrawal }, Is.Ordered.And.All.GreaterThan(0));
+        Assert.That(html, Does.Contain("Premium").And.Contain("9.69 EUR").And.Contain("<html lang=\"de\">")
+            .And.Not.Contain("<img").And.Not.Contain("<script").And.Not.Contain("<link"));
+    }
+
+    [Test]
+    public void Html_EscapesPaymentFields()
+    {
+        var payment = PaidOrder("paypal", "paypal", "<b>Evil</b> & Co");
+
+        var html = PurchaseConfirmationEmailService.BuildHtml(payment, "en", TestDocuments("en"));
+
+        Assert.That(html, Does.Contain("&lt;b&gt;Evil&lt;/b&gt; &amp; Co").And.Not.Contain("<b>Evil"));
+    }
+
+    [TestCase("en")]
+    [TestCase("de")]
+    public void TextAndHtml_ShowTheSameOverviewValues(string locale)
+    {
+        var payment = SubscriptionPayment("stripe", 4);
+        payment.ProductTitle = "Premium";
+        payment.PayedAmount = 9.69;
+        var documents = TestDocuments(locale);
+
+        var text = PurchaseConfirmationEmailService.BuildContent(payment, locale, documents);
+        var html = PurchaseConfirmationEmailService.BuildHtml(payment, locale, documents);
+
+        foreach (var value in new[] { "Premium", "9.69 EUR", "2026-11-18 10:00:00 UTC", "Stripe (", "sub-1" })
+            Assert.That((text.Contains(value), html.Contains(value)), Is.EqualTo((true, true)), value);
+    }
+
     private static PaymentEvent SubscriptionPayment(
         string provider, int weeks, string method = "card") =>
         new()
@@ -303,7 +496,7 @@ public class PurchaseConfirmationEmailServiceTests
         var payment = SubscriptionPayment("stripe", 4);
         payment.SubscriptionBillingWeeks = null;
 
-        Assert.That(Build(payment, "en"), Does.Not.Contain("SUBSCRIPTION\n"));
+        Assert.That(Build(payment, "en"), Does.Not.Contain("Billing period").And.Not.Contain("Cancel anytime"));
     }
 
     [Test]
@@ -312,14 +505,12 @@ public class PurchaseConfirmationEmailServiceTests
         var payment = SubscriptionPayment("stripe", 4);
         payment.SubscriptionRenewalAmount = 4.99m;
 
-        Assert.That(Build(payment, "en"), Does.Contain("SUBSCRIPTION\n------------")
-            .And.Contain("Billing period: 4 weeks")
+        Assert.That(Build(payment, "en"), Does.Contain("Billing period: 4 weeks")
             .And.Contain("renews every 4 weeks at 4.99 EUR until cancelled")
             .And.Contain("https://sky.coflnet.com/account")
             .And.Contain("https://coflnet.com/cancel-contract")
             .And.Contain("Purchase confirmation"));
-        Assert.That(Build(payment, "de"), Does.Contain("ABONNEMENT\n----------")
-            .And.Contain("Abrechnungszeitraum: 4 Wochen")
+        Assert.That(Build(payment, "de"), Does.Contain("Abrechnungszeitraum: 4 Wochen")
             .And.Contain("verlängert sich alle 4 Wochen zu 4.99 EUR bis zur Kündigung")
             .And.Contain("https://coflnet.com/de/cancel-contract"));
     }
@@ -360,7 +551,7 @@ public class PurchaseConfirmationEmailServiceTests
         var payment = SubscriptionPayment("lemonsqueezy", 52);
 
         var text = Build(payment, "en");
-        Assert.That(text, Does.Contain("Renewal and billing follow the checkout terms of lemonsqueezy")
+        Assert.That(text, Does.Contain("Renewal and billing follow the checkout terms of Lemon Squeezy")
             .And.Contain("Cancel anytime")
             .And.Contain("Fulfillment confirmation")
             .And.Not.Contain("every 4 weeks")
