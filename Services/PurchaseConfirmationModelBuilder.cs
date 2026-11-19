@@ -128,7 +128,11 @@ internal static class PurchaseConfirmationModelBuilder
     }
 
     private static bool ShowsServicePeriod(PaymentEvent payment) =>
-        PurchaseConfirmationEmailService.IsServicePurchase(payment) && !IsExpertConfig(payment);
+        (PurchaseConfirmationEmailService.IsServicePurchase(payment) || IsDeclaredSubscription(payment)) && !IsExpertConfig(payment);
+
+    /// <summary>A subscription payment carrying the buyer's immediate-start declaration (first payment of a subscription or of an extension term).</summary>
+    private static bool IsDeclaredSubscription(PaymentEvent payment) =>
+        SubscriptionTermsSection.IsSubscription(payment) && !string.IsNullOrWhiteSpace(payment.DeclarationText);
 
     private static EmailSection OrderDetails(PaymentEvent payment, bool german)
     {

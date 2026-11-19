@@ -608,6 +608,52 @@ public class PurchaseConfirmationEmailServiceTests
         Assert.That(Build(managed, "en"), Does.StartWith("Fulfillment confirmation — renewal"));
     }
 
+    private static PaymentEvent DeclaredSubscription()
+    {
+        var payment = SubscriptionPayment("stripe", 13);
+        payment.ConfirmationType = "subscription_purchase";
+        payment.DeclarationVersion = "2026-11";
+        payment.DeclarationText = "I request that the service starts immediately.";
+        payment.ServiceStartsAtUtc = new DateTime(2026, 11, 18, 10, 0, 0, DateTimeKind.Utc);
+        payment.ServiceEndsAtUtc = new DateTime(2027, 2, 17, 10, 0, 0, DateTimeKind.Utc);
+        return payment;
+    }
+
+    [Test]
+    public void BuildContent_SubscriptionWithDeclarationShowsEarlyPerformanceAndPeriod()
+    {
+        var text = Build(DeclaredSubscription(), "en");
+
+        Assert.That(text, Does.Contain("EARLY-PERFORMANCE DECLARATION\n")
+            .And.Contain("I request that the service starts immediately.")
+            .And.Contain("SERVICE PERIOD\n")
+            .And.Contain("Service ends: 2027-02-17 10:00:00 UTC"));
+    }
+
+    [Test]
+    public void BuildContent_SubscriptionWithoutDeclarationShowsNeitherSection()
+    {
+        var payment = DeclaredSubscription();
+        payment.DeclarationText = null;
+        payment.SubscriptionIsRenewal = true;
+
+        Assert.That(Build(payment, "de"), Does.Not.Contain("vorzeitigen Leistungsbeginn").And.Not.Contain("LEISTUNGSZEITRAUM"));
+    }
+
+    [Test]
+    public void BuildContent_ExtensionStatesRenewalForAnotherTerm()
+    {
+        var payment = DeclaredSubscription();
+        payment.SubscriptionIsExtension = true;
+        payment.SubscriptionRenewalWeeks = 4;
+        payment.SubscriptionRenewalAmount = 5m;
+
+        Assert.That(Build(payment, "en"), Does.Contain("renewed for another term of 13 weeks, as you requested")
+            .And.Contain("continues every 4 weeks at 5.00 EUR"));
+        Assert.That(Build(payment, "de"), Does.Contain("auf Ihren Wunsch um eine weitere Laufzeit von 13 Wochen verlängert"));
+        Assert.That(Build(payment, "en"), Does.StartWith("Renewal confirmation"));
+    }
+
     private static LegalDocuments TestDocuments(string language) =>
         new(
             "skycofl",

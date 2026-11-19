@@ -17,6 +17,15 @@ public sealed class PurchaseConfirmationDeliveryService
     private static readonly Prometheus.Counter sentCount = Prometheus.Metrics.CreateCounter(
         "sky_eventbroker_purchase_confirmation_sent_total",
         "Purchase confirmation emails successfully sent");
+    private static readonly Prometheus.Counter reminderSentCount = Prometheus.Metrics.CreateCounter(
+        "sky_eventbroker_renewal_reminder_sent_total",
+        "Subscription renewal reminder emails successfully sent");
+    private static readonly Prometheus.Counter reminderParkedCount = Prometheus.Metrics.CreateCounter(
+        "sky_eventbroker_renewal_reminder_parked_total",
+        "Renewal reminders parked after exhausting their delivery retries");
+    private static readonly Prometheus.Counter reminderSkippedCount = Prometheus.Metrics.CreateCounter(
+        "sky_eventbroker_renewal_reminder_skipped_total",
+        "Subscription renewal reminders not sent because the term had already ended");
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -79,6 +88,7 @@ public sealed class PurchaseConfirmationDeliveryService
         if (claimed == 0)
             return true;
 
+        var isReminder = false;
         var row = await db.PurchaseConfirmationDeliveries
             .AsNoTracking()
             .SingleAsync(item => item.Id == candidateId.Value
@@ -88,6 +98,12 @@ public sealed class PurchaseConfirmationDeliveryService
             var payment = JsonConvert.DeserializeObject<PaymentEvent>(row.Payload)
                 ?? throw new InvalidOperationException(
                     "Purchase confirmation payload is empty");
+            isReminder = PurchaseConfirmationEmailService.IsRenewalReminder(payment);
+            if (IsOutdatedReminder(payment))
+            {
+                await MarkSkippedAsync(row, leaseId, cancellationToken);
+                return true;
+            }
             // NewPayment enqueues rows with a null Recipient whenever the indexer lookup could
             // not be completed inline (see MessageService.TryGetIndexerEmail) so that the
             // purchase itself is never gated on the email address. Resolve it here instead; if
@@ -104,12 +120,12 @@ public sealed class PurchaseConfirmationDeliveryService
                 catch (Exception exception)
                 {
                     throw new InvalidOperationException(
-                        $"Could not resolve a recipient email for purchase confirmation {row.Reference} via the indexer",
+                        $"Could not resolve a recipient email for {Kind(isReminder)} {row.Reference} via the indexer",
                         exception);
                 }
                 if (string.IsNullOrWhiteSpace(resolvedEmail))
                     throw new InvalidOperationException(
-                        $"No account email found for purchase confirmation {row.Reference}");
+                        $"No account email found for {Kind(isReminder)} {row.Reference}");
                 recipient = resolvedEmail;
             }
             await emailService.SendAsync(
@@ -142,10 +158,11 @@ public sealed class PurchaseConfirmationDeliveryService
                         .SetProperty(item => item.LastError, error),
                         cancellationToken);
                 if (parked > 0)
-                    parkedCount.Inc();
+                    (isReminder ? reminderParkedCount : parkedCount).Inc();
                 logger.LogError(
                     exception,
-                    "Purchase confirmation {Reference} failed permanently after {Attempts} attempts and was parked",
+                    "{Kind} {Reference} failed permanently after {Attempts} attempts and was parked",
+                    Kind(isReminder),
                     row.Reference,
                     row.Attempts);
                 return true;
@@ -163,7 +180,8 @@ public sealed class PurchaseConfirmationDeliveryService
                     cancellationToken);
             logger.LogWarning(
                 exception,
-                "Could not send purchase confirmation {Reference}; retry scheduled",
+                "Could not send {Kind} {Reference}; retry scheduled",
+                Kind(isReminder),
                 row.Reference);
             return true;
         }
@@ -171,9 +189,10 @@ public sealed class PurchaseConfirmationDeliveryService
         // The email is out. From here a failure must NOT fall into the retry-scheduling path
         // above, or the customer risks getting emailed twice - if marking as sent keeps failing,
         // just let the lease expire instead.
-        sentCount.Inc();
+        (isReminder ? reminderSentCount : sentCount).Inc();
         logger.LogInformation(
-            "Sent purchase confirmation {Reference} on attempt {Attempts}",
+            "Sent {Kind} {Reference} on attempt {Attempts}",
+            Kind(isReminder),
             row.Reference,
             row.Attempts);
         var sentAt = DateTime.UtcNow;
@@ -199,7 +218,8 @@ public sealed class PurchaseConfirmationDeliveryService
             {
                 logger.LogWarning(
                     markException,
-                    "Could not mark purchase confirmation {Reference} as sent (attempt {Attempt}/{MaxAttempt}); retrying",
+                    "Could not mark {Kind} {Reference} as sent (attempt {Attempt}/{MaxAttempt}); retrying",
+                    Kind(isReminder),
                     row.Reference,
                     attempt,
                     MarkSentAttempts);
@@ -209,7 +229,8 @@ public sealed class PurchaseConfirmationDeliveryService
             {
                 logger.LogCritical(
                     markException,
-                    "Purchase confirmation {Reference} was emailed but could not be marked as sent after {Attempts} attempts; leaving the lease to expire instead of risking a duplicate send",
+                    "{Kind} {Reference} was emailed but could not be marked as sent after {Attempts} attempts; leaving the lease to expire instead of risking a duplicate send",
+                    Kind(isReminder),
                     row.Reference,
                     MarkSentAttempts);
             }
@@ -217,4 +238,30 @@ public sealed class PurchaseConfirmationDeliveryService
 
         return true;
     }
+
+    /// <summary>A reminder whose term already ended by the time it would go out is obsolete: the 4-week billing has started.</summary>
+    private static bool IsOutdatedReminder(PaymentEvent payment) =>
+        PurchaseConfirmationEmailService.IsRenewalReminder(payment)
+        && payment.SubscriptionTermEndsAt.HasValue
+        && payment.SubscriptionTermEndsAt.Value.ToUniversalTime() <= DateTime.UtcNow;
+
+    /// <summary>Closes the row without sending, keeping it as the dedupe record with the reason in LastError.</summary>
+    private async Task MarkSkippedAsync(PurchaseConfirmationDelivery row, Guid leaseId, CancellationToken cancellationToken)
+    {
+        await db.PurchaseConfirmationDeliveries
+            .Where(item => item.Id == row.Id && item.LeaseId == leaseId)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(item => item.SentAt, DateTime.UtcNow)
+                .SetProperty(item => item.Recipient, (string)null)
+                .SetProperty(item => item.Locale, (string)null)
+                .SetProperty(item => item.Payload, (string)null)
+                .SetProperty(item => item.LeaseId, (Guid?)null)
+                .SetProperty(item => item.LeaseUntil, (DateTime?)null)
+                .SetProperty(item => item.LastError, "skipped: the subscription term had already ended"),
+                cancellationToken);
+        reminderSkippedCount.Inc();
+        logger.LogInformation("Renewal reminder {Reference} skipped, its term had already ended", row.Reference);
+    }
+
+    private static string Kind(bool isReminder) => isReminder ? "renewal reminder" : "purchase confirmation";
 }

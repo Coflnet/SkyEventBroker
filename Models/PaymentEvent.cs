@@ -63,4 +63,16 @@ public class PaymentEvent
 
     /// <summary>How tax relates to <see cref="SubscriptionRenewalAmount"/>, like <see cref="TaxTreatment"/>.</summary>
     public string RenewalTaxTreatment { get; set; }
+
+    /// <summary>Renewal reminders only: when the term the subscription currently runs on (13 or 52 weeks) ends and it falls back to 4-week billing.</summary>
+    public DateTime? SubscriptionTermEndsAt { get; set; }
+
+    /// <summary>Renewal reminders only: what renewing for another <see cref="SubscriptionBillingWeeks"/> weeks costs, in <see cref="Currency"/>. Null: no extension is offered.</summary>
+    public decimal? SubscriptionExtensionAmount { get; set; }
+
+    /// <summary>Renewal reminders only: identifies the subscription in the extend link of the email.</summary>
+    public string SubscriptionExternalId { get; set; }
+
+    /// <summary>True when this payment is the first of a term the buyer asked to extend (instead of falling back to 4-week billing).</summary>
+    public bool? SubscriptionIsExtension { get; set; }
 }

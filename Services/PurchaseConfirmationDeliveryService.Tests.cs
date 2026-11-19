@@ -296,6 +296,104 @@ public class PurchaseConfirmationDeliveryServiceTests
         Assert.That(row.NextAttemptAt, Is.GreaterThan(DateTime.UtcNow));
     }
 
+    private static async Task<(PurchaseConfirmationDeliveryService Service, EventDbContext Db, RecordingSender Sender)> ReminderSetup(
+        SqliteConnection connection, DateTime termEndsAt)
+    {
+        var db = new EventDbContext(new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var payment = new PaymentEvent
+        {
+            UserId = "42",
+            PaymentProvider = "stripe",
+            PaymentProviderTransactionId = "renewal-reminder:sub_1:20261201",
+            ConfirmationType = "subscription_renewal_reminder",
+            SubscriptionTermEndsAt = termEndsAt
+        };
+        db.PurchaseConfirmationDeliveries.Add(new PurchaseConfirmationDelivery
+        {
+            Reference = "mail0123456789ABCDEF01234567",
+            Recipient = "buyer@example.test",
+            Locale = "de",
+            Payload = JsonConvert.SerializeObject(payment),
+            CreatedAt = DateTime.UtcNow,
+            NextAttemptAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var sender = new RecordingSender();
+        var service = new PurchaseConfirmationDeliveryService(db, sender, Mock.Of<IUserApi>(), NullLogger<PurchaseConfirmationDeliveryService>.Instance);
+        return (service, db, sender);
+    }
+
+    [Test]
+    public async Task ProcessOne_RenewalReminderIsSentOnceAndNotAgain()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var (service, db, sender) = await ReminderSetup(connection, DateTime.UtcNow.AddDays(7));
+        await using var _ = db;
+
+        Assert.That(await service.ProcessOneAsync(), Is.True);
+        Assert.That(await service.ProcessOneAsync(), Is.False);
+
+        Assert.That(sender.Recipients, Is.EqualTo(new[] { "buyer@example.test" }));
+        var row = await db.PurchaseConfirmationDeliveries.AsNoTracking().SingleAsync();
+        Assert.That(row.SentAt, Is.Not.Null);
+        Assert.That(row.Payload, Is.Null);
+    }
+
+    [Test]
+    public async Task ProcessOne_RenewalReminderWhoseTermEndedIsSkippedNotSent()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var (service, db, sender) = await ReminderSetup(connection, DateTime.UtcNow.AddMinutes(-1));
+        await using var _ = db;
+
+        Assert.That(await service.ProcessOneAsync(), Is.True);
+
+        Assert.That(sender.Recipients, Is.Empty);
+        var row = await db.PurchaseConfirmationDeliveries.AsNoTracking().SingleAsync();
+        Assert.That(row.SentAt, Is.Not.Null);
+        Assert.That(row.LastError, Does.StartWith("skipped"));
+        Assert.That(await service.ProcessOneAsync(), Is.False);
+    }
+
+    [Test]
+    public async Task ProcessOne_RenewalReminderWithoutRecipientResolvesViaIndexerAtSendTime()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var (_, db, sender) = await ReminderSetup(connection, DateTime.UtcNow.AddDays(7));
+        await using var _db = db;
+        await db.PurchaseConfirmationDeliveries.ExecuteUpdateAsync(u => u.SetProperty(r => r.Recipient, (string)null));
+        var userApi = new Mock<IUserApi>();
+        userApi.Setup(api => api.UserEmailGetAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleUser { Email = "late@example.test" });
+        var service = new PurchaseConfirmationDeliveryService(db, sender, userApi.Object, NullLogger<PurchaseConfirmationDeliveryService>.Instance);
+
+        Assert.That(await service.ProcessOneAsync(), Is.True);
+
+        Assert.That(sender.Recipients, Is.EqualTo(new[] { "late@example.test" }));
+    }
+
+    [Test]
+    public async Task ProcessOne_RenewalReminderWithoutAnyRecipientIsRetriedNotLost()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        var (service, db, sender) = await ReminderSetup(connection, DateTime.UtcNow.AddDays(7));
+        await using var _db = db;
+        await db.PurchaseConfirmationDeliveries.ExecuteUpdateAsync(u => u.SetProperty(r => r.Recipient, (string)null));
+
+        Assert.That(await service.ProcessOneAsync(), Is.True);
+
+        Assert.That(sender.Recipients, Is.Empty);
+        var row = await db.PurchaseConfirmationDeliveries.AsNoTracking().SingleAsync();
+        Assert.That(row.SentAt, Is.Null);
+        Assert.That(row.FailedAt, Is.Null);
+        Assert.That(row.NextAttemptAt, Is.GreaterThan(DateTime.UtcNow));
+    }
+
     [Test]
     public void PurchaseReference_NormalizesProviderAndType()
     {

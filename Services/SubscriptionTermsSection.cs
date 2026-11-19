@@ -28,9 +28,11 @@ internal static class SubscriptionTermsSection
         if (!IsSubscription(payment))
             return [];
         var weeks = payment.SubscriptionBillingWeeks.Value;
-        var next = IsCoflnetContinuation(payment)
-            ? ContinuationSentence(payment, weeks, german)
-            : ProviderSentence(payment, german);
+        var next = payment.SubscriptionIsExtension == true
+            ? ExtensionSentence(payment, weeks, german)
+            : IsCoflnetContinuation(payment)
+                ? ContinuationSentence(payment, weeks, german)
+                : ProviderSentence(payment, german);
         var cancelUrl = german ? CancelUrlDe : CancelUrlEn;
         var cancel = german
             ? $"Jederzeit kündbar: in Ihrem Konto unter {AccountUrl} oder über die Kündigungsseite {cancelUrl}"
@@ -62,6 +64,20 @@ internal static class SubscriptionTermsSection
             : $"After the first {Weeks(weeks, false)} it continues every {Weeks(next, false)} at the {next}-week price{Price(amount, " of ")} until cancelled.";
     }
 
+    private static string ExtensionSentence(PaymentEvent payment, int weeks, bool german)
+    {
+        var renewed = german
+            ? $"Das Abonnement wurde auf Ihren Wunsch um eine weitere Laufzeit von {Weeks(weeks, true)} verlängert."
+            : $"This subscription was renewed for another term of {Weeks(weeks, false)}, as you requested.";
+        if (!IsCoflnetContinuation(payment))
+            return $"{renewed} {ProviderSentence(payment, german)}";
+        var next = payment.SubscriptionRenewalWeeks is > 0 ? payment.SubscriptionRenewalWeeks.Value : DefaultRenewalWeeks;
+        var amount = TaxStatement.RenewalAmount(payment, german);
+        return german
+            ? $"{renewed} Danach läuft es alle {Weeks(next, true)}{Price(amount, " zu ")} weiter bis zur Kündigung."
+            : $"{renewed} Afterwards it continues every {Weeks(next, false)}{Price(amount, " at ")} until cancelled.";
+    }
+
     private static string ProviderSentence(PaymentEvent payment, bool german)
     {
         var provider = PaymentDisplayNames.Provider(payment.PaymentProvider);
@@ -70,9 +86,9 @@ internal static class SubscriptionTermsSection
             : $"Renewal and billing follow the checkout terms of {provider}.";
     }
 
-    private static string Price(string amount, string before) =>
+    internal static string Price(string amount, string before) =>
         amount.Length == 0 ? "" : before + amount;
 
-    private static string Weeks(int weeks, bool german) =>
+    internal static string Weeks(int weeks, bool german) =>
         german ? $"{weeks} {(weeks == 1 ? "Woche" : "Wochen")}" : $"{weeks} {(weeks == 1 ? "week" : "weeks")}";
 }

@@ -285,6 +285,74 @@ public class MessageServiceTests
         Assert.That(await delivery, Is.EqualTo(expected));
     }
 
+    private static PaymentEvent ReminderEvent(string email = "buyer@example.test") => new()
+    {
+        UserId = "42",
+        Email = email,
+        PaymentProvider = "stripe",
+        PaymentProviderTransactionId = "renewal-reminder:sub_1:20261201",
+        ConfirmationType = "subscription_renewal_reminder",
+        SubscriptionTermEndsAt = DateTime.UtcNow.AddDays(7)
+    };
+
+    [Test]
+    public async Task NewPayment_RenewalReminder_IsQueuedOnceAsItsOwnReference()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        await using var db = new EventDbContext(new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var service = CreateService(db, Mock.Of<IUserApi>());
+        var reminder = ReminderEvent();
+
+        await service.NewPayment(reminder);
+        await service.NewPayment(reminder);
+        var purchase = ReminderEvent();
+        purchase.ConfirmationType = null;
+        await service.NewPayment(purchase);
+
+        var references = await db.PurchaseConfirmationDeliveries.Select(row => row.Reference).ToListAsync();
+        Assert.That(references, Has.Count.EqualTo(2));
+        Assert.That(references, Does.Contain(MessageService.PurchaseConfirmationReference(
+            "stripe", reminder.PaymentProviderTransactionId, "subscription_renewal_reminder")));
+    }
+
+    [Test]
+    public async Task NewPayment_RenewalReminderWithoutEmail_ResolvesViaIndexerAndIsQueued()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        await using var db = new EventDbContext(new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var userApi = new Mock<IUserApi>();
+        userApi.Setup(api => api.UserEmailGetAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleUser { Email = "found@example.test" });
+        var service = CreateService(db, userApi.Object);
+
+        await service.NewPayment(ReminderEvent(email: null));
+
+        var row = await db.PurchaseConfirmationDeliveries.SingleAsync();
+        Assert.That(row.Recipient, Is.EqualTo("found@example.test"));
+    }
+
+    [Test]
+    public async Task NewPayment_RenewalReminderWithoutAnyEmail_IsStillQueuedForLaterResolution()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        await using var db = new EventDbContext(new DbContextOptionsBuilder<EventDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        var userApi = new Mock<IUserApi>();
+        userApi.Setup(api => api.UserEmailGetAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((GoogleUser)null);
+        var service = CreateService(db, userApi.Object);
+
+        await service.NewPayment(ReminderEvent(email: " "));
+
+        var row = await db.PurchaseConfirmationDeliveries.SingleAsync();
+        Assert.That(row.Recipient, Is.Null);
+    }
+
     private static MessageService CreateService(EventDbContext db, IUserApi userApi)
     {
         // GetCurrentValue<AccountInfo> only needs a working ISettingsApi that resolves quickly;

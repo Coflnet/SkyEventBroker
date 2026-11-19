@@ -77,6 +77,11 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
         var port = int.TryParse(config["SMTP_PORT"], out var parsedPort)
             ? parsedPort
             : 587;
+        if (IsRenewalReminder(payment))
+        {
+            await SendReminderAsync(host, port, new NetworkCredential(user, password), toEmail, locale, payment, confirmationReference, cancellationToken);
+            return;
+        }
         var documents = legalDocuments.Get(
             locale,
             string.IsNullOrWhiteSpace(payment.AgreementId)
@@ -99,6 +104,56 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
                 payment.PaymentProviderTransactionId);
             throw;
         }
+    }
+
+    private async Task SendReminderAsync(
+        string host,
+        int port,
+        NetworkCredential credentials,
+        string toEmail,
+        string locale,
+        PaymentEvent payment,
+        string reference,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var message = CreateReminderMessage(config, toEmail, locale, payment, reference);
+            await SendWithTimeoutAsync(host, port, credentials, message, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Failed to send renewal reminder {Reference}",
+                reference);
+            throw;
+        }
+    }
+
+    /// <summary>The reminder: plain text with an HTML alternative, no legal attachments.</summary>
+    internal static MailMessage CreateReminderMessage(
+        IConfiguration config,
+        string toEmail,
+        string locale,
+        PaymentEvent payment,
+        string reference = null)
+    {
+        var german = LocaleHelper.IsGerman(locale);
+        var model = RenewalReminderModelBuilder.Build(payment, german);
+        var message = new MailMessage(SenderAddress(config), new MailAddress(toEmail))
+        {
+            Subject = RenewalReminderModelBuilder.Subject(payment, german),
+            Body = PurchaseConfirmationRenderer.ToText(model),
+            BodyEncoding = Encoding.UTF8,
+            SubjectEncoding = Encoding.UTF8
+        };
+        message.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(
+            PurchaseConfirmationRenderer.ToHtml(model, german ? "de" : "en"), Encoding.UTF8, "text/html"));
+        message.ReplyToList.Add(ReplyToAddress(config));
+        if (!string.IsNullOrWhiteSpace(reference))
+            message.Headers["Message-ID"] = $"<{reference}@mail.coflnet.com>";
+        return message;
     }
 
     /// <summary>The From address with a display name; mail without one is far more likely to be filed as spam.</summary>
@@ -259,7 +314,7 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
 
     internal static string Title(PaymentEvent payment, bool german)
     {
-        var renewal = payment.SubscriptionIsRenewal == true;
+        var renewal = payment.SubscriptionIsRenewal == true || payment.SubscriptionIsExtension == true;
         if (!IsMerchantOfRecord(payment))
             return renewal
                 ? german ? "Verlängerungsbestätigung" : "Renewal confirmation"
@@ -269,6 +324,12 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
             return title;
         return german ? $"{title} — Verlängerung" : $"{title} — renewal";
     }
+
+    internal const string RenewalReminderType = "subscription_renewal_reminder";
+
+    /// <summary>A reminder that a term ends soon. It is an email only, never a payment.</summary>
+    internal static bool IsRenewalReminder(PaymentEvent payment) =>
+        string.Equals(payment?.ConfirmationType?.Trim(), RenewalReminderType, StringComparison.OrdinalIgnoreCase);
 
     internal static bool IsServicePurchase(PaymentEvent payment) =>
         string.Equals(

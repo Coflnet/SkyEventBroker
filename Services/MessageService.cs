@@ -22,6 +22,9 @@ namespace Coflnet.Sky.EventBroker.Services
         private static readonly Prometheus.Counter purchaseConfirmationNoEmailCount = Prometheus.Metrics.CreateCounter(
             "sky_eventbroker_purchase_confirmation_no_email",
             "How many purchase confirmations were dropped because no email address could be found for the paying user");
+        private static readonly Prometheus.Counter renewalReminderNoEmailCount = Prometheus.Metrics.CreateCounter(
+            "sky_eventbroker_renewal_reminder_no_email_total",
+            "How many renewal reminders found no email address for the user at queue time (resolved again when sending)");
         private EventDbContext db;
         private ConnectionMultiplexer connection;
         private Payments.Client.Api.ProductsApi productsApi;
@@ -338,6 +341,7 @@ namespace Coflnet.Sky.EventBroker.Services
                 || string.IsNullOrWhiteSpace(payment.UserId))
                 return;
 
+            var isReminder = PurchaseConfirmationEmailService.IsRenewalReminder(payment);
             var confirmationReference = PurchaseConfirmationReference(
                 payment.PaymentProvider,
                 payment.PaymentProviderTransactionId,
@@ -346,8 +350,8 @@ namespace Coflnet.Sky.EventBroker.Services
                     delivery => delivery.Reference == confirmationReference))
             {
                 Logger.LogInformation(
-                    "Purchase confirmation {Reference} skipped as duplicate (provider {Provider}, transaction {TransactionId})",
-                    confirmationReference, payment.PaymentProvider, payment.PaymentProviderTransactionId);
+                    "{Kind} {Reference} skipped as duplicate (provider {Provider}, transaction {TransactionId})",
+                    Kind(isReminder), confirmationReference, payment.PaymentProvider, payment.PaymentProviderTransactionId);
                 return;
             }
             // the event already carries the email on the stripe/paypal paths; only hit the
@@ -355,7 +359,7 @@ namespace Coflnet.Sky.EventBroker.Services
             var email = payment.Email;
             if (string.IsNullOrWhiteSpace(email))
                 email = await TryGetIndexerEmail(
-                    payment.UserId, confirmationReference, payment.PaymentProvider);
+                    payment.UserId, confirmationReference, payment.PaymentProvider, isReminder);
             // Delivery of the purchased good must never depend on resolving an email here.
             // Whether the lookup above failed, threw, or simply returned nothing, the row below
             // is always enqueued (Recipient may be null). PurchaseConfirmationDeliveryService
@@ -389,11 +393,12 @@ namespace Coflnet.Sky.EventBroker.Services
                     throw;
                 Logger.LogInformation(
                     "Purchase confirmation {Reference} skipped as duplicate after concurrent insert (provider {Provider}, transaction {TransactionId})",
-                    confirmationReference, payment.PaymentProvider, payment.PaymentProviderTransactionId);
+                    Kind(isReminder), confirmationReference, payment.PaymentProvider, payment.PaymentProviderTransactionId);
                 return;
             }
             Logger.LogInformation(
-                "Purchase confirmation {Reference} queued (provider {Provider}, transaction {TransactionId}, recipient found {HasRecipient})",
+                "{Kind} {Reference} queued (provider {Provider}, transaction {TransactionId}, recipient found {HasRecipient})",
+                Kind(isReminder),
                 confirmationReference, payment.PaymentProvider, payment.PaymentProviderTransactionId,
                 !string.IsNullOrWhiteSpace(email));
         }
@@ -411,7 +416,8 @@ namespace Coflnet.Sky.EventBroker.Services
         private async Task<string> TryGetIndexerEmail(
             string userId,
             string confirmationReference,
-            string provider)
+            string provider,
+            bool isReminder)
         {
             try
             {
@@ -420,25 +426,29 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             catch (Coflnet.Sky.Indexer.Client.Client.ApiException exception)
             {
-                purchaseConfirmationNoEmailCount.Inc();
+                (isReminder ? renewalReminderNoEmailCount : purchaseConfirmationNoEmailCount).Inc();
                 Logger.LogWarning(
                     exception,
-                    "Indexer lookup failed for paid transaction {reference} (provider {provider}); the confirmation will still be enqueued and the recipient resolved later",
+                    "Indexer lookup failed for {kind} {reference} (provider {provider}); it will still be enqueued and the recipient resolved later",
+                    Kind(isReminder),
                     confirmationReference,
                     provider);
                 return null;
             }
             catch (Exception exception)
             {
-                purchaseConfirmationNoEmailCount.Inc();
+                (isReminder ? renewalReminderNoEmailCount : purchaseConfirmationNoEmailCount).Inc();
                 Logger.LogWarning(
                     exception,
-                    "Unexpected error resolving account email for paid transaction {reference} (provider {provider}); the confirmation will still be enqueued and the recipient resolved later",
+                    "Unexpected error resolving account email for {kind} {reference} (provider {provider}); it will still be enqueued and the recipient resolved later",
+                    Kind(isReminder),
                     confirmationReference,
                     provider);
                 return null;
             }
         }
+
+        private static string Kind(bool isReminder) => isReminder ? "Renewal reminder" : "Purchase confirmation";
 
         internal static string PurchaseConfirmationReference(
             string provider,

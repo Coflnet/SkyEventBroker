@@ -33,6 +33,15 @@ internal static class TaxStatement
         return WithStatement(amount, Statement(payment.RenewalTaxTreatment, payment, null, german));
     }
 
+    /// <summary>The price of extending the current term with its tax statement (taxed like the renewals); empty when no extension is offered.</summary>
+    public static string ExtensionAmount(PaymentEvent payment, bool german)
+    {
+        if (payment.SubscriptionExtensionAmount is not > 0)
+            return "";
+        var amount = Money(payment.SubscriptionExtensionAmount.Value, payment.Currency);
+        return WithStatement(amount, Statement(payment.RenewalTaxTreatment, payment, null, german));
+    }
+
     private static string PaidStatement(PaymentEvent payment, bool german)
     {
         if (payment.TaxTreatment == null)
