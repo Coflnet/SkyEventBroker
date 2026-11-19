@@ -51,4 +51,16 @@ public class PaymentEvent
 
     /// <summary>True when this payment renews an already running subscription instead of starting it.</summary>
     public bool? SubscriptionIsRenewal { get; set; }
+
+    /// <summary>
+    /// How tax relates to <see cref="PayedAmount"/>: "included", "net" (the merchant of record adds the tax) or "none".
+    /// Null on events of older producers and one-time purchases: the email then makes no claim about tax.
+    /// </summary>
+    public string TaxTreatment { get; set; }
+
+    /// <summary>The tax contained in <see cref="PayedAmount"/>, in <see cref="Currency"/> (only with TaxTreatment "included").</summary>
+    public decimal? TaxAmount { get; set; }
+
+    /// <summary>How tax relates to <see cref="SubscriptionRenewalAmount"/>, like <see cref="TaxTreatment"/>.</summary>
+    public string RenewalTaxTreatment { get; set; }
 }

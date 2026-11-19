@@ -532,7 +532,7 @@ public class PurchaseConfirmationEmailServiceTests
         var payment = SubscriptionPayment("stripe", 13);
         payment.SubscriptionRenewalAmount = 5m;
 
-        Assert.That(Build(payment, "en"), Does.Contain("4-week price (5.00 EUR) until cancelled"));
+        Assert.That(Build(payment, "en"), Does.Contain("4-week price of 5.00 EUR until cancelled"));
     }
 
     [Test]
