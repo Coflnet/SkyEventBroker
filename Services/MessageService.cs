@@ -344,7 +344,12 @@ namespace Coflnet.Sky.EventBroker.Services
                 payment.ConfirmationType);
             if (await db.PurchaseConfirmationDeliveries.AnyAsync(
                     delivery => delivery.Reference == confirmationReference))
+            {
+                Logger.LogInformation(
+                    "Purchase confirmation {Reference} skipped as duplicate (provider {Provider}, transaction {TransactionId})",
+                    confirmationReference, payment.PaymentProvider, payment.PaymentProviderTransactionId);
                 return;
+            }
             // the event already carries the email on the stripe/paypal paths; only hit the
             // indexer when it doesn't, to avoid a needless round-trip
             var email = payment.Email;
@@ -382,7 +387,15 @@ namespace Coflnet.Sky.EventBroker.Services
                 if (!await db.PurchaseConfirmationDeliveries.AnyAsync(
                         delivery => delivery.Reference == confirmationReference))
                     throw;
+                Logger.LogInformation(
+                    "Purchase confirmation {Reference} skipped as duplicate after concurrent insert (provider {Provider}, transaction {TransactionId})",
+                    confirmationReference, payment.PaymentProvider, payment.PaymentProviderTransactionId);
+                return;
             }
+            Logger.LogInformation(
+                "Purchase confirmation {Reference} queued (provider {Provider}, transaction {TransactionId}, recipient found {HasRecipient})",
+                confirmationReference, payment.PaymentProvider, payment.PaymentProviderTransactionId,
+                !string.IsNullOrWhiteSpace(email));
         }
 
         /// <summary>

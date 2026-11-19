@@ -323,7 +323,8 @@ public class PurchaseConfirmationDeliveryServiceTests
             string toEmail,
             string locale,
             PaymentEvent payment,
-            string confirmationReference = null)
+            string confirmationReference = null,
+            System.Threading.CancellationToken cancellationToken = default)
         {
             if (DelayBeforeFail.HasValue)
                 await Task.Delay(DelayBeforeFail.Value);

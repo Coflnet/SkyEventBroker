@@ -1,5 +1,13 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
+using System.Net;
+using System.Net.Mail;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Text;
 using Coflnet.Sky.EventBroker.Models;
 using NUnit.Framework;
@@ -8,6 +16,29 @@ namespace Coflnet.Sky.EventBroker.Services;
 
 public class PurchaseConfirmationEmailServiceTests
 {
+    [Test]
+    public async Task SendWithTimeout_FailsWhenServerNeverAnswers()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        _ = listener.AcceptTcpClientAsync(); // accepts the connection (backlog) and never answers
+        var service = new PurchaseConfirmationEmailService(
+            new ConfigurationBuilder().Build(),
+            NullLogger<PurchaseConfirmationEmailService>.Instance,
+            null)
+        { SendTimeout = TimeSpan.FromSeconds(1) };
+        using var message = new MailMessage("a@example.com", "b@example.com", "s", "b");
+
+        var watch = Stopwatch.StartNew();
+        // the outer WaitAsync fails the test instead of hanging CI if the timeout ever stops reaching the send
+        Assert.ThrowsAsync<TimeoutException>(() => service.SendWithTimeoutAsync(
+            "127.0.0.1", port, new NetworkCredential("u", "p"), message, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(30)));
+
+        Assert.That(watch.Elapsed, Is.LessThan(TimeSpan.FromSeconds(10)));
+    }
+
     [Test]
     public void BuildContent_ContainsTransactionAgreementAndWithdrawalDetails()
     {

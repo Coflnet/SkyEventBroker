@@ -26,11 +26,11 @@ public sealed class PurchaseConfirmationController : ControllerBase
         this.configuration = configuration;
     }
 
-    [HttpGet("{provider}/{paymentId}/{confirmationType}")]
+    [HttpGet("{provider}/{paymentId}/{confirmationType?}")]
     public async Task<IActionResult> Get(
         string provider,
         string paymentId,
-        string confirmationType)
+        string confirmationType = null)
     {
         var expected = configuration["PURCHASE_CONFIRMATIONS:READ_TOKEN"];
         if (expected?.Length < 32)

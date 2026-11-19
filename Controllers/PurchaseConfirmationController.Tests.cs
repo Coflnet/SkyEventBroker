@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Coflnet.Sky.EventBroker.Models;
@@ -55,5 +56,55 @@ public class PurchaseConfirmationControllerTests
         Assert.That(await controller.Get(
             "coflcoins", "42", "service_purchase"),
             Is.TypeOf<NoContentResult>());
+    }
+
+    [Test]
+    public async Task SubscriptionConfirmationWithoutTypeIsFoundByNullTypeReference()
+    {
+        await using var connection = new SqliteConnection("Filename=:memory:");
+        await connection.OpenAsync();
+        await using var db = new EventDbContext(
+            new DbContextOptionsBuilder<EventDbContext>()
+                .UseSqlite(connection)
+                .Options);
+        await db.Database.EnsureCreatedAsync();
+        db.PurchaseConfirmationDeliveries.Add(new()
+        {
+            Reference = MessageService.PurchaseConfirmationReference("paypal", "I-1"),
+            CreatedAt = DateTime.UtcNow,
+            NextAttemptAt = DateTime.UtcNow,
+            SentAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var token = new string('x', 32);
+        var controller = new PurchaseConfirmationController(
+            db,
+            new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string>
+                {
+                    ["PURCHASE_CONFIRMATIONS:READ_TOKEN"] = token
+                }).Build())
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+        controller.Request.Headers.Authorization = $"Bearer {token}";
+
+        Assert.That(await controller.Get("paypal", "I-1"), Is.TypeOf<NoContentResult>());
+    }
+
+    [Test]
+    public void ConfirmationTypeRouteSegmentIsOptional()
+    {
+        var template = typeof(PurchaseConfirmationController)
+            .GetMethod(nameof(PurchaseConfirmationController.Get))
+            .GetCustomAttributes(typeof(HttpGetAttribute), false)
+            .Cast<HttpGetAttribute>()
+            .Single()
+            .Template;
+
+        Assert.That(template, Does.EndWith("{confirmationType?}"));
     }
 }
