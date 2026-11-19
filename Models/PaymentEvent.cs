@@ -6,6 +6,9 @@ public class PaymentEvent
 {
     public double PayedAmount { get; set; }
     public string ProductId { get; set; }
+
+    /// <summary>Human readable product title. Optional: events of older producers omit it and the email falls back to <see cref="ProductId"/>.</summary>
+    public string ProductTitle { get; set; }
     public string UserId { get; set; }
     public string Email { get; set; }
     public string Currency { get; set; }
