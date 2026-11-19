@@ -14,6 +14,9 @@ public sealed class PurchaseConfirmationDeliveryService
     private static readonly Prometheus.Counter parkedCount = Prometheus.Metrics.CreateCounter(
         "sky_eventbroker_purchase_confirmation_parked_total",
         "Purchase confirmations parked after exhausting their delivery retries");
+    private static readonly Prometheus.Counter sentCount = Prometheus.Metrics.CreateCounter(
+        "sky_eventbroker_purchase_confirmation_sent_total",
+        "Purchase confirmation emails successfully sent");
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -113,14 +116,15 @@ public sealed class PurchaseConfirmationDeliveryService
                 recipient,
                 row.Locale,
                 payment,
-                row.Reference);
+                row.Reference,
+                cancellationToken);
         }
         catch (Exception exception)
         {
             // The send itself failed (SMTP down, bad address, terms-hash mismatch, ...). No email
             // went out, so it is safe to schedule a retry (or park after MaxAttempts) here.
             // Compute the backoff from "now" as of the failure, not the (possibly long stale, given
-            // SmtpClient's ~100s default timeout) "now" captured before the send - otherwise the
+            // the send timeout of PurchaseConfirmationEmailService) "now" captured before the send - otherwise the
             // backoff can already be in the past and become a no-op.
             var failedAt = DateTime.UtcNow;
             var error = $"{exception.GetType().Name}: {exception.Message}";
@@ -167,6 +171,11 @@ public sealed class PurchaseConfirmationDeliveryService
         // The email is out. From here a failure must NOT fall into the retry-scheduling path
         // above, or the customer risks getting emailed twice - if marking as sent keeps failing,
         // just let the lease expire instead.
+        sentCount.Inc();
+        logger.LogInformation(
+            "Sent purchase confirmation {Reference} on attempt {Attempts}",
+            row.Reference,
+            row.Attempts);
         var sentAt = DateTime.UtcNow;
         for (var attempt = 1; attempt <= MarkSentAttempts; attempt++)
         {
@@ -182,7 +191,8 @@ public sealed class PurchaseConfirmationDeliveryService
                         .SetProperty(item => item.LeaseId, (Guid?)null)
                         .SetProperty(item => item.LeaseUntil, (DateTime?)null)
                         .SetProperty(item => item.LastError, (string)null),
-                        cancellationToken);
+                        // the email already went out: a shutdown must not stop recording that, or the next pod resends it
+                        CancellationToken.None);
                 return true;
             }
             catch (Exception markException) when (attempt < MarkSentAttempts)
@@ -193,7 +203,7 @@ public sealed class PurchaseConfirmationDeliveryService
                     row.Reference,
                     attempt,
                     MarkSentAttempts);
-                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken);
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), CancellationToken.None);
             }
             catch (Exception markException)
             {

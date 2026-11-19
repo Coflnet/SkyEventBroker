@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Mail;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Coflnet.Sky.EventBroker.Models;
 using Microsoft.Extensions.Configuration;
@@ -20,13 +21,24 @@ public interface IPurchaseConfirmationEmailSender
         string toEmail,
         string locale,
         PaymentEvent payment,
-        string confirmationReference = null);
+        string confirmationReference = null,
+        CancellationToken cancellationToken = default);
 }
 
 public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
 {
     private const string PrivacyUrl = "https://coflnet.com/privacy";
     private const string Footer = "Coflnet GmbH, Dorfstraße 27a, 84163 Marklkofen, Germany — Local Court Landshut, HRB 13861 — support@coflnet.com";
+
+    /// <summary>
+    /// SmtpClient.Timeout only applies to synchronous sends, so async sends are bounded by this
+    /// instead; a stalled SMTP server would otherwise block every confirmation silently.
+    /// Generous, since a server may take a while to accept the message after its final ".",
+    /// and a timeout there means a duplicate on retry, but below the 5 minute delivery lease.
+    /// </summary>
+    internal static readonly TimeSpan DefaultSendTimeout = TimeSpan.FromMinutes(3);
+
+    internal TimeSpan SendTimeout { get; set; } = DefaultSendTimeout;
 
     private readonly IConfiguration config;
     private readonly ILogger<PurchaseConfirmationEmailService> logger;
@@ -46,7 +58,8 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
         string toEmail,
         string locale,
         PaymentEvent payment,
-        string confirmationReference = null)
+        string confirmationReference = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toEmail);
         ArgumentNullException.ThrowIfNull(payment);
@@ -76,11 +89,6 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
 
         try
         {
-            using var client = new SmtpClient(host, port)
-            {
-                Credentials = new NetworkCredential(user, password),
-                EnableSsl = true
-            };
             using var message = new MailMessage(from, toEmail, subject, text);
             if (!string.IsNullOrWhiteSpace(confirmationReference))
                 message.Headers["Message-ID"] =
@@ -98,7 +106,8 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
                         payment.OrderDetailsJson)),
                     "order-details.json",
                     "application/json"));
-            await client.SendMailAsync(message);
+            await SendWithTimeoutAsync(
+                host, port, new NetworkCredential(user, password), message, cancellationToken);
         }
         catch (Exception exception)
         {
@@ -107,6 +116,36 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
                 "Failed to send purchase confirmation for payment {PaymentId}",
                 payment.PaymentProviderTransactionId);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Sends the message, failing with a <see cref="TimeoutException"/> when the server does not
+    /// finish within <see cref="SendTimeout"/>. The caller's token is linked, so its
+    /// cancellation still surfaces as an <see cref="OperationCanceledException"/>.
+    /// </summary>
+    internal async Task SendWithTimeoutAsync(
+        string host,
+        int port,
+        NetworkCredential credentials,
+        MailMessage message,
+        CancellationToken cancellationToken)
+    {
+        using var client = new SmtpClient(host, port)
+        {
+            Credentials = credentials,
+            EnableSsl = true
+        };
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(SendTimeout);
+        try
+        {
+            await client.SendMailAsync(message, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"SMTP send did not complete within {SendTimeout.TotalSeconds:0.##}s");
         }
     }
 
