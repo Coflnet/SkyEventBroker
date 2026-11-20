@@ -244,17 +244,10 @@ namespace Coflnet.Sky.EventBroker.Services
             }
             using var scope = scopeFactory.CreateScope();
             var service = GetService(scope);
-            string extraSubId = "";
-            if (notification.data.TryGetValue("whitelist", out var whitelistData))
-            {
-                var whitelist = JsonConvert.DeserializeObject<ListEntry>(whitelistData);
-                if (whitelist.Tags != null && whitelist.Tags.Count > 0)
-                    extraSubId = ";" + string.Join(',', whitelist.Tags);
-            }
             await service.AddMessage(new MessageContainer()
             {
                 Message = notification.body,
-                SourceSubId = notification.data["subId"] + extraSubId,
+                SourceSubId = SourceSubId(notification.data, userId),
                 ImageLink = notification.icon,
                 Data = notification.data,
                 SourceType = SourceType.Subscription.ToString(),
@@ -267,6 +260,39 @@ namespace Coflnet.Sky.EventBroker.Services
                 }
             });
             logger.LogInformation("Notification event received for {user}", userId);
+        }
+
+        /// <summary>
+        /// The subId with its whitelist tags; empty when the notification has no subId
+        /// </summary>
+        private string SourceSubId(Dictionary<string, string> data, string userId)
+        {
+            if (data.TryGetValue("subId", out var subId))
+                return subId + WhitelistSuffix(data);
+            logger.LogWarning("Notification event for {user} has no subId, delivering it with an empty one", userId);
+            return "";
+        }
+
+        /// <summary>
+        /// Appends the whitelist tags (";a,b") to the subId; a null, empty or unparsable whitelist adds nothing
+        /// </summary>
+        private string WhitelistSuffix(Dictionary<string, string> data)
+        {
+            if (!data.TryGetValue("whitelist", out var whitelistData) || string.IsNullOrWhiteSpace(whitelistData))
+                return "";
+            ListEntry whitelist;
+            try
+            {
+                whitelist = JsonConvert.DeserializeObject<ListEntry>(whitelistData);
+            }
+            catch (JsonException e)
+            {
+                logger.LogWarning(e, "Could not parse whitelist of notification, ignoring it");
+                return "";
+            }
+            if (whitelist?.Tags == null || whitelist.Tags.Count == 0)
+                return "";
+            return ";" + string.Join(',', whitelist.Tags);
         }
 
         /// <summary>
