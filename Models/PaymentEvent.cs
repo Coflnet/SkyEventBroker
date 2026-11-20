@@ -75,4 +75,19 @@ public class PaymentEvent
 
     /// <summary>True when this payment is the first of a term the buyer asked to extend (instead of falling back to 4-week billing).</summary>
     public bool? SubscriptionIsExtension { get; set; }
+
+    /// <summary>Subscription payments: true on the payment of a switch to a longer term (paid days left of the previous term are kept, nothing is refunded); null otherwise.</summary>
+    public bool? SubscriptionIsTermSwitch { get; set; }
+
+    /// <summary>Term switches: the length of the previous term in weeks (4 or 13).</summary>
+    public int? SubscriptionPreviousBillingWeeks { get; set; }
+
+    /// <summary>Term switches: when the access paid before the switch ended; the new term is added from there.</summary>
+    public DateTime? SubscriptionPreviousAccessEndsAt { get; set; }
+
+    /// <summary>Term switches: when the first cycle after the new term is charged.</summary>
+    public DateTime? SubscriptionNextBillingAt { get; set; }
+
+    /// <summary>Term switches: the automatic promotion that lowered this payment, null without one.</summary>
+    public string SubscriptionPromotionCode { get; set; }
 }

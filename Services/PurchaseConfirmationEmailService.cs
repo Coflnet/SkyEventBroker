@@ -314,6 +314,8 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
 
     internal static string Title(PaymentEvent payment, bool german)
     {
+        if (SubscriptionTermsSection.IsCompleteTermSwitch(payment))
+            return TermSwitchTitle(payment, german);
         var renewal = payment.SubscriptionIsRenewal == true || payment.SubscriptionIsExtension == true;
         if (!IsMerchantOfRecord(payment))
             return renewal
@@ -323,6 +325,15 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
         if (!renewal)
             return title;
         return german ? $"{title} — Verlängerung" : $"{title} — renewal";
+    }
+
+    private static string TermSwitchTitle(PaymentEvent payment, bool german)
+    {
+        var weeks = payment.SubscriptionBillingWeeks.Value;
+        var head = IsMerchantOfRecord(payment)
+            ? german ? "Bereitstellungsbestätigung" : "Fulfillment confirmation"
+            : german ? "Bestellbestätigung" : "Order confirmation";
+        return german ? $"{head}: Wechsel auf {weeks} Wochen" : $"{head}: switched to {weeks} weeks";
     }
 
     internal const string RenewalReminderType = "subscription_renewal_reminder";

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using Coflnet.Sky.EventBroker.Models;
 
 namespace Coflnet.Sky.EventBroker.Services;
@@ -30,15 +31,55 @@ internal static class SubscriptionTermsSection
         var weeks = payment.SubscriptionBillingWeeks.Value;
         var next = payment.SubscriptionIsExtension == true
             ? ExtensionSentence(payment, weeks, german)
-            : IsCoflnetContinuation(payment)
-                ? ContinuationSentence(payment, weeks, german)
-                : ProviderSentence(payment, german);
+            : IsCompleteTermSwitch(payment)
+                ? TermSwitchSentence(payment, weeks, german)
+                : IsCoflnetContinuation(payment)
+                    ? ContinuationSentence(payment, weeks, german)
+                    : ProviderSentence(payment, german);
         var cancelUrl = german ? CancelUrlDe : CancelUrlEn;
         var cancel = german
             ? $"Jederzeit kündbar: in Ihrem Konto unter {AccountUrl} oder über die Kündigungsseite {cancelUrl}"
             : $"Cancel anytime: in your account at {AccountUrl} or via the cancellation page {cancelUrl}";
-        return [next, cancel];
+        return PromotionLine(payment, weeks, german) is { } promotion ? [next, promotion, cancel] : [next, cancel];
     }
+
+    /// <summary>A term switch with every detail the switch wording needs; otherwise the normal subscription wording is used.</summary>
+    internal static bool IsCompleteTermSwitch(PaymentEvent payment) =>
+        payment.SubscriptionIsTermSwitch == true
+        && payment.SubscriptionPreviousBillingWeeks is > 0
+        && payment.SubscriptionPreviousAccessEndsAt.HasValue
+        && payment.ServiceEndsAtUtc.HasValue
+        && payment.SubscriptionNextBillingAt.HasValue;
+
+    private static string TermSwitchSentence(PaymentEvent payment, int weeks, bool german)
+    {
+        var previous = payment.SubscriptionPreviousBillingWeeks.Value;
+        var previousEnd = FormatUtc(payment.SubscriptionPreviousAccessEndsAt);
+        var newEnd = FormatUtc(payment.ServiceEndsAtUtc);
+        var switched = german
+            ? $"Sie haben von {Weeks(previous, true)} auf {Weeks(weeks, true)} gewechselt. Ihre bereits bezahlten Tage bis {previousEnd} bleiben erhalten; Ihr Zugang läuft nun bis {newEnd}."
+            : $"You switched from {Weeks(previous, false)} to {Weeks(weeks, false)}. Your remaining paid days until {previousEnd} are kept; your access now runs until {newEnd}.";
+        if (!IsCoflnetContinuation(payment))
+            return $"{switched} {ProviderSentence(payment, german)}";
+        var next = payment.SubscriptionRenewalWeeks is > 0 ? payment.SubscriptionRenewalWeeks.Value : DefaultRenewalWeeks;
+        var amount = TaxStatement.RenewalAmount(payment, german);
+        var from = FormatUtc(payment.SubscriptionNextBillingAt);
+        return german
+            ? $"{switched} Ab {from} läuft es alle {Weeks(next, true)}{Price(amount, " zu ")} weiter bis zur Kündigung."
+            : $"{switched} From {from} it continues every {Weeks(next, false)}{Price(amount, " at ")} until cancelled.";
+    }
+
+    private static string PromotionLine(PaymentEvent payment, int weeks, bool german)
+    {
+        if (!IsCompleteTermSwitch(payment) || string.IsNullOrWhiteSpace(payment.SubscriptionPromotionCode))
+            return null;
+        return german
+            ? $"Aktionspreis für die ersten {Weeks(weeks, true)}."
+            : $"Sale price for the first {Weeks(weeks, false)}.";
+    }
+
+    private static string FormatUtc(DateTime? value) =>
+        value?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'", CultureInfo.InvariantCulture) ?? "";
 
     /// <summary>Direct Stripe/PayPal and Managed Payments subscriptions continue as Coflnet's own 4-week plans.</summary>
     private static bool IsCoflnetContinuation(PaymentEvent payment)

@@ -654,6 +654,65 @@ public class PurchaseConfirmationEmailServiceTests
         Assert.That(Build(payment, "en"), Does.StartWith("Renewal confirmation"));
     }
 
+    private static PaymentEvent TermSwitch(bool promotion)
+    {
+        var payment = DeclaredSubscription();
+        payment.SubscriptionIsTermSwitch = true;
+        payment.SubscriptionPreviousBillingWeeks = 4;
+        payment.SubscriptionPreviousAccessEndsAt = new DateTime(2026, 11, 25, 8, 30, 0, DateTimeKind.Utc);
+        payment.SubscriptionNextBillingAt = new DateTime(2027, 2, 24, 8, 30, 0, DateTimeKind.Utc);
+        payment.ServiceEndsAtUtc = new DateTime(2027, 2, 24, 8, 30, 0, DateTimeKind.Utc);
+        payment.SubscriptionRenewalWeeks = 4;
+        payment.SubscriptionRenewalAmount = 5m;
+        payment.SubscriptionPromotionCode = promotion ? "GTA6" : null;
+        return payment;
+    }
+
+    [Test]
+    public void BuildContent_TermSwitchEnglishWithPromotion()
+    {
+        var text = Build(TermSwitch(true), "en");
+
+        Assert.That(text, Does.Contain("You switched from 4 weeks to 13 weeks. Your remaining paid days until 2026-11-25 08:30 UTC are kept; your access now runs until 2027-02-24 08:30 UTC. From 2027-02-24 08:30 UTC it continues every 4 weeks at 5.00 EUR until cancelled.")
+            .And.Contain("Sale price for the first 13 weeks.")
+            .And.Contain("EARLY-PERFORMANCE DECLARATION")
+            .And.Contain("SERVICE PERIOD"));
+    }
+
+    [Test]
+    public void BuildContent_TermSwitchGermanWithoutPromotion()
+    {
+        var text = Build(TermSwitch(false), "de");
+
+        Assert.That(text, Does.Contain("Sie haben von 4 Wochen auf 13 Wochen gewechselt. Ihre bereits bezahlten Tage bis 2026-11-25 08:30 UTC bleiben erhalten; Ihr Zugang läuft nun bis 2027-02-24 08:30 UTC. Ab 2027-02-24 08:30 UTC läuft es alle 4 Wochen zu 5.00 EUR weiter bis zur Kündigung.")
+            .And.Not.Contain("Aktionspreis"));
+        Assert.That(Build(TermSwitch(true), "de"), Does.Contain("Aktionspreis für die ersten 13 Wochen."));
+    }
+
+    [Test]
+    public void Title_TermSwitchHasOwnSubject()
+    {
+        var payment = TermSwitch(false);
+        var managed = TermSwitch(false);
+        managed.PaymentMethod = "stripe_managed_payments";
+
+        Assert.That(PurchaseConfirmationEmailService.Title(payment, false), Is.EqualTo("Order confirmation: switched to 13 weeks"));
+        Assert.That(PurchaseConfirmationEmailService.Title(payment, true), Is.EqualTo("Bestellbestätigung: Wechsel auf 13 Wochen"));
+        Assert.That(PurchaseConfirmationEmailService.Title(managed, false), Is.EqualTo("Fulfillment confirmation: switched to 13 weeks"));
+    }
+
+    [Test]
+    public void BuildContent_TermSwitchMissingFieldsFallsBackToNormalWording()
+    {
+        var payment = TermSwitch(true);
+        payment.SubscriptionPreviousAccessEndsAt = null;
+
+        var text = Build(payment, "en");
+
+        Assert.That(text, Does.Not.Contain("You switched").And.Not.Contain("Sale price"));
+        Assert.That(text, Does.Contain("After the first 13 weeks it continues every 4 weeks"));
+    }
+
     private static LegalDocuments TestDocuments(string language) =>
         new(
             "skycofl",
