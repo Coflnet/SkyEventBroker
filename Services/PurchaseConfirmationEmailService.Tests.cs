@@ -843,4 +843,139 @@ public class PurchaseConfirmationEmailServiceTests
             Encoding.UTF8.GetBytes(key),
             $"{key}-{language}-hash",
             $"{key}-acceptance-hash");
+
+    private static PaymentEvent TrialStart(string provider = "stripe", string method = "card")
+    {
+        var payment = SubscriptionPayment(provider, 4, method);
+        payment.ConfirmationType = "subscription_trial_started";
+        payment.PaymentProviderTransactionId = "trial-sub-1";
+        payment.ProductTitle = "BazaarPro Premium";
+        payment.PayedAmount = 0;
+        payment.SubscriptionTrialDays = 3;
+        payment.SubscriptionTrialEndsAt = new DateTime(2026, 11, 21, 10, 0, 0, DateTimeKind.Utc);
+        payment.SubscriptionNextBillingAt = payment.SubscriptionTrialEndsAt;
+        payment.SubscriptionFirstChargeAmount = 15.46m;
+        payment.SubscriptionRenewalWeeks = 4;
+        payment.SubscriptionRenewalAmount = 15.46m;
+        payment.RenewalTaxTreatment = "included";
+        payment.SubscriptionIsRenewal = false;
+        payment.DeclarationVersion = "2026-11";
+        payment.DeclarationText = "I request that the service starts immediately.";
+        payment.ServiceStartsAtUtc = new DateTime(2026, 11, 18, 10, 0, 0, DateTimeKind.Utc);
+        payment.ServiceEndsAtUtc = payment.SubscriptionTrialEndsAt;
+        return payment;
+    }
+
+    [Test]
+    public void BuildContent_TrialStartEnglishSaysNoPaymentAndNamesFirstCharge()
+    {
+        var text = Build(TrialStart(), "en");
+
+        Assert.That(text, Does.StartWith("Your free trial has started: BazaarPro Premium")
+            .And.Contain("No payment has been taken.")
+            .And.Contain("The trial ends on 2026-11-21 10:00 UTC. On that date the first term of 4 weeks is charged at 15.46 EUR (incl. VAT), then every 4 weeks at 15.46 EUR (incl. VAT) until cancelled. If you cancel before then, nothing is charged.")
+            .And.Contain("Trial ends: 2026-11-21 10:00:00 UTC")
+            .And.Contain("Cancel anytime: in your account at https://sky.coflnet.com/account")
+            .And.Contain("EARLY-PERFORMANCE DECLARATION")
+            .And.Contain("WITHDRAWAL")
+            .And.Not.Contain("confirms payment")
+            .And.Not.Contain("Amount paid")
+            .And.Not.Contain("Purchase confirmation"));
+        // regression: a trial start said "Paid with" next to "No payment has been taken"
+        Assert.That(text, Does.Contain("Payment method: ").And.Not.Contain("Paid with"));
+        Assert.That(Build(TrialStart(), "de"), Does.Contain("Zahlungsmittel: ").And.Not.Contain("Zahlung über"));
+    }
+
+    [Test]
+    public void BuildContent_TrialStartGerman()
+    {
+        var text = Build(TrialStart(), "de");
+
+        Assert.That(text, Does.StartWith("Ihr kostenloser Testzeitraum hat begonnen: BazaarPro Premium")
+            .And.Contain("Es wurde keine Zahlung eingezogen.")
+            .And.Contain("Der Testzeitraum endet am 2026-11-21 10:00 UTC. An diesem Tag wird die erste Laufzeit von 4 Wochen zu 15.46 EUR (inkl. MwSt.) berechnet, danach alle 4 Wochen zu 15.46 EUR (inkl. MwSt.) bis zur Kündigung. Wenn Sie vor diesem Zeitpunkt kündigen, wird nichts berechnet.")
+            .And.Contain("Jederzeit kündbar")
+            .And.Not.Contain("Bezahlter Betrag"));
+    }
+
+    [Test]
+    public void BuildContent_TrialStartManagedPaymentsIsFulfillmentNoticeWithoutPaymentClaim()
+    {
+        var payment = TrialStart("stripe", "stripe_managed_payments");
+
+        var en = Build(payment, "en");
+        Assert.That(en, Does.StartWith("Fulfillment confirmation — free trial started: BazaarPro Premium")
+            .And.Contain("Sold through Link, LLC (Stripe Managed Payments) is the seller (merchant of record)")
+            .And.Contain("No payment has been taken.")
+            .And.Not.Contain("confirms payment"));
+        Assert.That(Build(payment, "de"), Does.StartWith("Bereitstellungsbestätigung — kostenloser Testzeitraum gestartet: BazaarPro Premium"));
+    }
+
+    [Test]
+    public void BuildContent_TrialStartBazaarProUsesBillingPageAndAttachesAgreement()
+    {
+        var payment = TrialStart();
+        payment.AgreementId = "bazaarPro";
+        payment.AgreementHash = new string('b', 64);
+        var documents = BazaarProDocuments("en");
+
+        var text = PurchaseConfirmationEmailService.BuildContent(payment, "en", documents);
+
+        Assert.That(text, Does.Contain("https://pro.skyblock.bz/dashboard/settings/billing"));
+        foreach (var document in documents.AgreementDocuments)
+            Assert.That(text, Does.Contain($"- {document.Title} ({document.Version})"));
+        Assert.That(text, Does.Contain($"Withdrawal instructions ({documents.Withdrawal.Version})"));
+    }
+
+    [Test]
+    public void BuildContent_TrialStartWithoutAmountsOmitsThem()
+    {
+        var payment = TrialStart();
+        payment.SubscriptionFirstChargeAmount = null;
+        payment.SubscriptionRenewalAmount = null;
+
+        Assert.That(Build(payment, "en"), Does.Contain("the first term of 4 weeks is charged, then every 4 weeks until cancelled."));
+    }
+
+    [Test]
+    public void BuildContent_FirstPaymentAfterTrialReadsAsPurchaseWithTrialEndedLine()
+    {
+        var payment = SubscriptionPayment("stripe", 4);
+        payment.PayedAmount = 15.46;
+        payment.SubscriptionFollowsTrial = true;
+        payment.SubscriptionTrialEndsAt = new DateTime(2026, 11, 21, 10, 0, 0, DateTimeKind.Utc);
+
+        var text = Build(payment, "en");
+
+        Assert.That(text, Does.StartWith("Purchase confirmation")
+            .And.Contain("confirms payment and fulfillment")
+            .And.Contain("Amount paid: 15.46 EUR")
+            .And.Contain("Your free trial ended on 2026-11-21 10:00 UTC.")
+            .And.Not.Contain("No payment has been taken"));
+        Assert.That(Build(payment, "de"), Does.Contain("Ihr kostenloser Testzeitraum endete am 2026-11-21 10:00 UTC."));
+    }
+
+    [Test]
+    public void BuildContent_NormalPurchaseHasNoTrialWording()
+    {
+        var text = Build(SubscriptionPayment("stripe", 4), "en");
+
+        Assert.That(text, Does.StartWith("Purchase confirmation")
+            .And.Not.Contain("trial").And.Not.Contain("Trial"));
+    }
+
+    [Test]
+    public void PaymentEvent_RoundTripKeepsTrialFields()
+    {
+        var json = Newtonsoft.Json.JsonConvert.SerializeObject(TrialStart());
+
+        var back = Newtonsoft.Json.JsonConvert.DeserializeObject<PaymentEvent>(json);
+
+        Assert.That(back.SubscriptionTrialDays, Is.EqualTo(3));
+        Assert.That(back.SubscriptionTrialEndsAt, Is.EqualTo(new DateTime(2026, 11, 21, 10, 0, 0, DateTimeKind.Utc)));
+        Assert.That(back.SubscriptionFirstChargeAmount, Is.EqualTo(15.46m));
+        var after = new PaymentEvent { SubscriptionFollowsTrial = true };
+        Assert.That(Newtonsoft.Json.JsonConvert.DeserializeObject<PaymentEvent>(
+            Newtonsoft.Json.JsonConvert.SerializeObject(after)).SubscriptionFollowsTrial, Is.True);
+    }
 }

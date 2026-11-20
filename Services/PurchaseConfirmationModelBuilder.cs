@@ -52,12 +52,20 @@ internal static class PurchaseConfirmationModelBuilder
         rows.Add((german ? "Datum" : "Date", FormatUtc(payment.Timestamp)));
         var paidWith = PaidWith(payment, german);
         if (paidWith.Length > 0)
-            rows.Add((german ? "Zahlung über" : "Paid with", paidWith));
+            rows.Add((PaidWithLabel(payment, german), paidWith));
         if (SubscriptionTermsSection.BillingPeriod(payment, german) is { } period)
             rows.Add(period);
+        if (SubscriptionTermsSection.IsTrialStart(payment) && TrialEnd(payment) is { } trialEnd)
+            rows.Add((german ? "Testzeitraum endet" : "Trial ends", FormatUtc(trialEnd)));
         rows.Add((german ? "Transaktionsreferenz" : "Transaction reference", payment.PaymentProviderTransactionId));
         return rows;
     }
+
+    /// <summary>A trial start took no payment, so its provider is only the payment method for the later charges</summary>
+    private static string PaidWithLabel(PaymentEvent payment, bool german) =>
+        SubscriptionTermsSection.IsTrialStart(payment)
+            ? german ? "Zahlungsmittel" : "Payment method"
+            : german ? "Zahlung über" : "Paid with";
 
     private static string PaidWith(PaymentEvent payment, bool german)
     {
@@ -68,6 +76,8 @@ internal static class PurchaseConfirmationModelBuilder
 
     private static string Intro(PaymentEvent payment, bool german)
     {
+        if (SubscriptionTermsSection.IsTrialStart(payment))
+            return TrialIntro(payment, german);
         var seller = PurchaseConfirmationEmailService.SellerName(payment);
         var service = IsBazaarPro(payment) ? "BazaarPro" : "SkyCofl";
         if (PurchaseConfirmationEmailService.IsMerchantOfRecord(payment))
@@ -81,6 +91,19 @@ internal static class PurchaseConfirmationModelBuilder
         return german
             ? "Diese E-Mail bestätigt die Zahlung und Bereitstellung Ihres Vertrags mit der Coflnet GmbH."
             : "This email confirms payment and fulfillment of your contract with Coflnet GmbH.";
+    }
+
+    private static string TrialIntro(PaymentEvent payment, bool german)
+    {
+        var charge = SubscriptionTermsSection.TrialChargeSentence(payment, german);
+        if (!PurchaseConfirmationEmailService.IsMerchantOfRecord(payment))
+            return german
+                ? $"Diese E-Mail bestätigt den Beginn Ihres kostenlosen Testzeitraums und Ihren Vertrag mit der Coflnet GmbH. Es wurde keine Zahlung eingezogen. {charge}"
+                : $"This email confirms the start of your free trial and your contract with Coflnet GmbH. No payment has been taken. {charge}";
+        var seller = PurchaseConfirmationEmailService.SellerName(payment);
+        return german
+            ? $"Diese E-Mail bestätigt den Beginn Ihres kostenlosen Testzeitraums auf Ihrem Coflnet-Konto. Es wurde keine Zahlung eingezogen. {charge} {seller} ist der beim Checkout ausgewiesene Verkäufer (Merchant of Record); dessen Beleg und Checkout-Bedingungen enthalten die verbindlichen Bestell-, Zahlungs- und Widerrufsangaben."
+            : $"This email confirms the start of your free trial on your Coflnet account. No payment has been taken. {charge} {seller} is the seller (merchant of record) identified at checkout; its receipt and checkout terms contain the authoritative order, payment and withdrawal information.";
     }
 
     internal static bool IsBazaarPro(PaymentEvent payment) =>
@@ -176,6 +199,9 @@ internal static class PurchaseConfirmationModelBuilder
                 $"{(german ? "Datenschutzerklärung" : "Privacy policy")}: {PrivacyUrl}",
                 $"{(german ? "E-Mail" : "Email")}: {SupportEmail}"
             ]);
+
+    private static DateTime? TrialEnd(PaymentEvent payment) =>
+        SubscriptionTermsSection.TrialEnd(payment);
 
     private static string FormatUtc(DateTime? value) =>
         value?.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture) ?? "";

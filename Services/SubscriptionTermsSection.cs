@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using Coflnet.Sky.EventBroker.Models;
 
@@ -22,6 +23,35 @@ internal static class SubscriptionTermsSection
     public static bool IsSubscription(PaymentEvent payment) =>
         payment.SubscriptionBillingWeeks is > 0;
 
+    internal const string TrialStartedType = "subscription_trial_started";
+
+    /// <summary>The confirmation of a subscription that started with a free trial: no payment has been taken yet.</summary>
+    public static bool IsTrialStart(PaymentEvent payment) =>
+        IsSubscription(payment)
+        && string.Equals(payment.ConfirmationType?.Trim(), TrialStartedType, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The first payment after a trial, when the event names the day the trial ended.</summary>
+    private static bool IsFirstPaymentAfterTrial(PaymentEvent payment) =>
+        payment.SubscriptionFollowsTrial == true && payment.SubscriptionTrialEndsAt.HasValue;
+
+    /// <summary>When the trial ends and the first charge is due.</summary>
+    internal static DateTime? TrialEnd(PaymentEvent payment) =>
+        payment.SubscriptionTrialEndsAt ?? payment.SubscriptionNextBillingAt ?? payment.ServiceEndsAtUtc;
+
+    /// <summary>When the trial ends, what is charged then and how it continues, e.g. for the intro of a trial start.</summary>
+    internal static string TrialChargeSentence(PaymentEvent payment, bool german)
+    {
+        var end = FormatUtc(TrialEnd(payment));
+        var first = TaxStatement.FirstChargeAmount(payment, german);
+        var renewal = TaxStatement.RenewalAmount(payment, german);
+        var weeks = payment.SubscriptionBillingWeeks.Value;
+        var next = payment.SubscriptionRenewalWeeks is > 0 ? payment.SubscriptionRenewalWeeks.Value : DefaultRenewalWeeks;
+        var when = end.Length > 0 ? end : german ? "Ende des Testzeitraums" : "the end of the trial";
+        return german
+            ? $"Der Testzeitraum endet am {when}. An diesem Tag wird die erste Laufzeit von {Weeks(weeks, true)}{Price(first, " zu ")} berechnet, danach alle {Weeks(next, true)}{Price(renewal, " zu ")} bis zur Kündigung. Wenn Sie vor diesem Zeitpunkt kündigen, wird nichts berechnet."
+            : $"The trial ends on {when}. On that date the first term of {Weeks(weeks, false)} is charged{Price(first, " at ")}, then every {Weeks(next, false)}{Price(renewal, " at ")} until cancelled. If you cancel before then, nothing is charged.";
+    }
+
     /// <summary>The billing period row of the overview; null when the event is no subscription payment.</summary>
     public static (string Label, string Value)? BillingPeriod(PaymentEvent payment, bool german) =>
         IsSubscription(payment)
@@ -33,6 +63,9 @@ internal static class SubscriptionTermsSection
     {
         if (!IsSubscription(payment))
             return [];
+        var cancel = CancelLine(payment, german);
+        if (IsTrialStart(payment))
+            return [cancel];
         var weeks = payment.SubscriptionBillingWeeks.Value;
         var next = payment.SubscriptionIsExtension == true
             ? ExtensionSentence(payment, weeks, german)
@@ -41,12 +74,28 @@ internal static class SubscriptionTermsSection
                 : IsCoflnetContinuation(payment)
                     ? ContinuationSentence(payment, weeks, german)
                     : ProviderSentence(payment, german);
+        var lines = new List<string> { next };
+        if (PromotionLine(payment, weeks, german) is { } promotion)
+            lines.Add(promotion);
+        lines.Add(cancel);
+        if (IsFirstPaymentAfterTrial(payment))
+            lines.Insert(0, TrialEndedLine(payment, german));
+        return [.. lines];
+    }
+
+    private static string TrialEndedLine(PaymentEvent payment, bool german)
+    {
+        var end = FormatUtc(payment.SubscriptionTrialEndsAt);
+        return german ? $"Ihr kostenloser Testzeitraum endete am {end}." : $"Your free trial ended on {end}.";
+    }
+
+    private static string CancelLine(PaymentEvent payment, bool german)
+    {
         var cancelUrl = german ? CancelUrlDe : CancelUrlEn;
         var accountUrl = AccountUrlFor(payment);
-        var cancel = german
+        return german
             ? $"Jederzeit kündbar: in Ihrem Konto unter {accountUrl} oder über die Kündigungsseite {cancelUrl}"
             : $"Cancel anytime: in your account at {accountUrl} or via the cancellation page {cancelUrl}";
-        return PromotionLine(payment, weeks, german) is { } promotion ? [next, promotion, cancel] : [next, cancel];
     }
 
     /// <summary>A term switch with every detail the switch wording needs; otherwise the normal subscription wording is used.</summary>

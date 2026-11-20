@@ -314,6 +314,8 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
 
     internal static string Title(PaymentEvent payment, bool german)
     {
+        if (SubscriptionTermsSection.IsTrialStart(payment))
+            return TrialStartTitle(payment, german);
         if (SubscriptionTermsSection.IsCompleteTermSwitch(payment))
             return TermSwitchTitle(payment, german);
         var renewal = payment.SubscriptionIsRenewal == true || payment.SubscriptionIsExtension == true;
@@ -325,6 +327,18 @@ public class PurchaseConfirmationEmailService : IPurchaseConfirmationEmailSender
         if (!renewal)
             return title;
         return german ? $"{title} — Verlängerung" : $"{title} — renewal";
+    }
+
+    private static string TrialStartTitle(PaymentEvent payment, bool german)
+    {
+        var product = PaymentDisplayNames.Product(payment);
+        if (IsMerchantOfRecord(payment))
+            return german
+                ? $"Bereitstellungsbestätigung — kostenloser Testzeitraum gestartet: {product}"
+                : $"Fulfillment confirmation — free trial started: {product}";
+        return german
+            ? $"Ihr kostenloser Testzeitraum hat begonnen: {product}"
+            : $"Your free trial has started: {product}";
     }
 
     private static string TermSwitchTitle(PaymentEvent payment, bool german)

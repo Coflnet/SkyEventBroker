@@ -90,4 +90,16 @@ public class PaymentEvent
 
     /// <summary>Term switches: the automatic promotion that lowered this payment, null without one.</summary>
     public string SubscriptionPromotionCode { get; set; }
+
+    /// <summary>Trial starts (ConfirmationType "subscription_trial_started"): the length of the free trial in days; null otherwise.</summary>
+    public int? SubscriptionTrialDays { get; set; }
+
+    /// <summary>Trial starts: when the trial ends and <see cref="SubscriptionFirstChargeAmount"/> is charged unless the buyer cancels before. Also set on the first payment after a trial.</summary>
+    public DateTime? SubscriptionTrialEndsAt { get; set; }
+
+    /// <summary>Trial starts: what is charged when the trial ends for <see cref="SubscriptionBillingWeeks"/> weeks, in <see cref="Currency"/>, taxed like <see cref="RenewalTaxTreatment"/>.</summary>
+    public decimal? SubscriptionFirstChargeAmount { get; set; }
+
+    /// <summary>True on the first payment after a free trial (its confirmation was the trial start); null otherwise.</summary>
+    public bool? SubscriptionFollowsTrial { get; set; }
 }
