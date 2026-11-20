@@ -17,9 +17,10 @@ namespace Coflnet.Sky.EventBroker.Services;
 
 public sealed class LegalDocumentProvider : IHostedService
 {
-    private const string DefaultAgreementId = "skycofl";
+    internal const string DefaultAgreementId = "skycofl";
+    internal const string BazaarProAgreementId = "bazaarPro";
     private static readonly string[] ConfirmationAgreementIds =
-        [DefaultAgreementId, "expertMarketplace"];
+        [DefaultAgreementId, "expertMarketplace", BazaarProAgreementId];
     private static readonly Uri CoflnetOrigin = new("https://coflnet.com/");
     private readonly IHttpClientFactory clients;
     private readonly IConfiguration configuration;

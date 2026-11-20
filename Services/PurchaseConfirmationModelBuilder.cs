@@ -69,10 +69,11 @@ internal static class PurchaseConfirmationModelBuilder
     private static string Intro(PaymentEvent payment, bool german)
     {
         var seller = PurchaseConfirmationEmailService.SellerName(payment);
+        var service = IsBazaarPro(payment) ? "BazaarPro" : "SkyCofl";
         if (PurchaseConfirmationEmailService.IsMerchantOfRecord(payment))
             return german
-                ? $"Diese E-Mail bestätigt die Bereitstellung auf Ihrem Coflnet-Konto. {seller} war der beim Checkout ausgewiesene Verkäufer (Merchant of Record); dessen Beleg und Checkout-Bedingungen enthalten die verbindlichen Bestell-, Zahlungs- und Widerrufsangaben. Die beigefügten Coflnet-Dokumente betreffen nur das gesonderte SkyCofl-Nutzungsverhältnis und ändern den Verkauf durch {seller} nicht."
-                : $"This email confirms fulfillment on your Coflnet account. {seller} was the seller (merchant of record) identified at checkout; its receipt and checkout terms contain the authoritative order, payment and withdrawal information. The attached Coflnet documents cover only the separate SkyCofl usage relationship and do not alter the sale by {seller}.";
+                ? $"Diese E-Mail bestätigt die Bereitstellung auf Ihrem Coflnet-Konto. {seller} war der beim Checkout ausgewiesene Verkäufer (Merchant of Record); dessen Beleg und Checkout-Bedingungen enthalten die verbindlichen Bestell-, Zahlungs- und Widerrufsangaben. Die beigefügten Coflnet-Dokumente betreffen nur das gesonderte {service}-Nutzungsverhältnis und ändern den Verkauf durch {seller} nicht."
+                : $"This email confirms fulfillment on your Coflnet account. {seller} was the seller (merchant of record) identified at checkout; its receipt and checkout terms contain the authoritative order, payment and withdrawal information. The attached Coflnet documents cover only the separate {service} usage relationship and do not alter the sale by {seller}.";
         if (IsExpertConfig(payment))
             return german
                 ? "Diese E-Mail bestätigt Zahlung und Bestellung bei der Coflnet GmbH. Die Lizenz an der bezeichneten Experten-Konfigurationsfassung und die verwaltete Aktualisierungsfunktion werden unmittelbar nach Zustellung dieser Bestätigung bereitgestellt."
@@ -81,6 +82,9 @@ internal static class PurchaseConfirmationModelBuilder
             ? "Diese E-Mail bestätigt die Zahlung und Bereitstellung Ihres Vertrags mit der Coflnet GmbH."
             : "This email confirms payment and fulfillment of your contract with Coflnet GmbH.";
     }
+
+    internal static bool IsBazaarPro(PaymentEvent payment) =>
+        string.Equals(payment.AgreementId, LegalDocumentProvider.BazaarProAgreementId, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsExpertConfig(PaymentEvent payment) =>
         string.Equals(payment.AgreementId, "expertMarketplace", StringComparison.Ordinal);

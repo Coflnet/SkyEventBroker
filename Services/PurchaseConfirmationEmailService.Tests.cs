@@ -713,6 +713,112 @@ public class PurchaseConfirmationEmailServiceTests
         Assert.That(text, Does.Contain("After the first 13 weeks it continues every 4 weeks"));
     }
 
+    private static PaymentEvent BazaarProPayment() =>
+        new()
+        {
+            ProductId = "bazaarpro-premium",
+            ProductTitle = "BazaarPro Premium",
+            PaymentProvider = "stripe",
+            PaymentMethod = "card",
+            PaymentProviderTransactionId = "bp-1",
+            Currency = "EUR",
+            SubscriptionBillingWeeks = 4,
+            AgreementId = "bazaarPro",
+            AgreementHash = new string('b', 64),
+            Timestamp = new DateTime(2026, 11, 18, 10, 0, 0, DateTimeKind.Utc)
+        };
+
+    private static LegalDocuments BazaarProDocuments(string language) =>
+        TestDocuments(language) with
+        {
+            AgreementId = "bazaarPro",
+            AgreementHash = new string('b', 64)
+        };
+
+    [Test]
+    public void BuildContent_BazaarProPointsToBazaarProBillingPage()
+    {
+        var text = PurchaseConfirmationEmailService.BuildContent(
+            BazaarProPayment(), "en", BazaarProDocuments("en"));
+
+        Assert.That(text, Does.Contain("BazaarPro Premium")
+            .And.Contain("in your account at https://pro.skyblock.bz/dashboard/settings/billing")
+            .And.Contain("https://coflnet.com/cancel-contract")
+            .And.Not.Contain("sky.coflnet.com"));
+    }
+
+    [Test]
+    public void BuildContent_BazaarProGermanUsesBazaarProBillingPage()
+    {
+        var text = PurchaseConfirmationEmailService.BuildContent(
+            BazaarProPayment(), "de", BazaarProDocuments("de"));
+
+        Assert.That(text, Does.Contain("in Ihrem Konto unter https://pro.skyblock.bz/dashboard/settings/billing")
+            .And.Contain("https://coflnet.com/de/cancel-contract"));
+    }
+
+    [Test]
+    public void CreateMessage_BazaarProAttachesTheBazaarProAgreementDocuments()
+    {
+        using var message = PurchaseConfirmationEmailService.CreateMessage(
+            new ConfigurationBuilder().Build(),
+            "buyer@example.com",
+            "en",
+            BazaarProPayment(),
+            BazaarProDocuments("en"));
+
+        Assert.That(
+            message.Attachments.Select(attachment => attachment.Name),
+            Is.EquivalentTo(new[]
+            {
+                "terms-en-2026-08-08.md",
+                "commerceTerms-en-2026-08-08.md",
+                "aiTerms-en-2026-08-08.md",
+                "skycoflTerms-en-2026-08-08.md",
+                "withdrawal-en-2026-08-08.md"
+            }));
+    }
+
+    [Test]
+    public void BuildContent_BazaarProMerchantOfRecordNamesBazaarProNotSkyCofl()
+    {
+        var payment = BazaarProPayment();
+        payment.PaymentProvider = "lemonsqueezy";
+
+        var text = PurchaseConfirmationEmailService.BuildContent(
+            payment, "en", BazaarProDocuments("en"));
+
+        Assert.That(text, Does.Contain("separate BazaarPro usage relationship")
+            .And.Not.Contain("SkyCofl usage relationship"));
+    }
+
+    [Test]
+    public void BuildContent_UnnamedAgreementKeepsSkyCoflAccountPage()
+    {
+        var payment = SubscriptionPayment("stripe", 4);
+        var text = Build(payment, "en");
+
+        Assert.That(text, Does.Contain("https://sky.coflnet.com/account")
+            .And.Not.Contain("pro.skyblock.bz"));
+    }
+
+    [Test]
+    public void ValidateAgreement_BazaarProHashMismatchStillThrows()
+    {
+        var payment = BazaarProPayment();
+        payment.AgreementHash = new string('c', 64);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            PurchaseConfirmationEmailService.ValidateAgreement(payment, BazaarProDocuments("en")));
+    }
+
+    [Test]
+    public void ValidateAgreement_BazaarProMatchingHashDoesNotThrow()
+    {
+        Assert.DoesNotThrow(() =>
+            PurchaseConfirmationEmailService.ValidateAgreement(BazaarProPayment(), BazaarProDocuments("en")));
+    }
+
     private static LegalDocuments TestDocuments(string language) =>
         new(
             "skycofl",

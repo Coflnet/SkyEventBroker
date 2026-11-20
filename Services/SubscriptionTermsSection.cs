@@ -10,9 +10,14 @@ namespace Coflnet.Sky.EventBroker.Services;
 internal static class SubscriptionTermsSection
 {
     public const string AccountUrl = "https://sky.coflnet.com/account";
+    private const string BazaarProAccountUrl = "https://pro.skyblock.bz/dashboard/settings/billing";
     private const string CancelUrlEn = "https://coflnet.com/cancel-contract";
     private const string CancelUrlDe = "https://coflnet.com/de/cancel-contract";
     private const int DefaultRenewalWeeks = 4;
+
+    /// <summary>Where the buyer manages the subscription: BazaarPro purchases have their own billing page.</summary>
+    internal static string AccountUrlFor(PaymentEvent payment) =>
+        PurchaseConfirmationModelBuilder.IsBazaarPro(payment) ? BazaarProAccountUrl : AccountUrl;
 
     public static bool IsSubscription(PaymentEvent payment) =>
         payment.SubscriptionBillingWeeks is > 0;
@@ -37,9 +42,10 @@ internal static class SubscriptionTermsSection
                     ? ContinuationSentence(payment, weeks, german)
                     : ProviderSentence(payment, german);
         var cancelUrl = german ? CancelUrlDe : CancelUrlEn;
+        var accountUrl = AccountUrlFor(payment);
         var cancel = german
-            ? $"Jederzeit kündbar: in Ihrem Konto unter {AccountUrl} oder über die Kündigungsseite {cancelUrl}"
-            : $"Cancel anytime: in your account at {AccountUrl} or via the cancellation page {cancelUrl}";
+            ? $"Jederzeit kündbar: in Ihrem Konto unter {accountUrl} oder über die Kündigungsseite {cancelUrl}"
+            : $"Cancel anytime: in your account at {accountUrl} or via the cancellation page {cancelUrl}";
         return PromotionLine(payment, weeks, german) is { } promotion ? [next, promotion, cancel] : [next, cancel];
     }
 
